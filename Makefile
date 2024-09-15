@@ -3,6 +3,8 @@ CC = i686-elf-gcc
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra
 LINKFLAGS = -ffreestanding -O2 -nostdlib 
 
+## i suck at using git
+
 ## main dirs
 bootDir = boot
 kernelDir = kernel
