@@ -3,8 +3,6 @@ CC = i686-elf-gcc
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra
 LINKFLAGS = -ffreestanding -O2 -nostdlib 
 
-## i suck at using git
-
 ## main dirs
 bootDir = boot
 kernelDir = kernel
@@ -42,6 +40,9 @@ picO = $(buildDir)/pic.o
 checkIntC = $(kernelDir)/checkingInt.c
 checkIntO = $(buildDir)/checkingInt.o
 
+## load the idt
+lidtC = $(kernelDir)/lidt.c
+lidtO = $(buildDir)/lidt.o
 
 all: $(osBin)
 
@@ -70,16 +71,20 @@ $(picO): $(picC)
 	@echo ""
 	$(CC) -c $(picC) -o $(picO) $(CFLAGS)
 
+$(lidtO): $(lidtC)
+	@echo "Compiling $(lidtC)"
+	@echo ""
+	$(CC) -c $(lidtC) -o $(lidtO) $(CFLAGS)
 
 $(checkIntO): $(checkIntC)
 	@echo "Compiling $(checkIntC)"
 	@echo ""
 	$(CC) -c $(checkIntC) -o $(checkIntO) $(CFLAGS)
 
-$(osBin): $(linkerLd) $(bootO) $(kernelO) $(termO) $(picO) $(intsO) $(checkIntO)
+$(osBin): $(linkerLd) $(bootO) $(kernelO) $(termO) $(picO) $(intsO) $(checkIntO) $(lidtO)
 	@echo "Compiling $(osBin)"
 	@echo ""
-	$(CC) -T $(linkerLd) -o $(osBin) $(LINKFLAGS) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO)
+	$(CC) -T $(linkerLd) -o $(osBin) $(LINKFLAGS) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO) $(lidtO)
 
 clean:
-	rm -rf $(osBin) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO)
+	rm -rf $(osBin) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO) $(lidtO)
