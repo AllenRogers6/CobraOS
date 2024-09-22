@@ -11,6 +11,8 @@ LINKFLAGS = -ffreestanding -O2 -nostdlib
 #
 #########
 
+$(shell mkdir -p build)
+
 ## main dirs
 bootDir = boot
 kernelDir = kernel
