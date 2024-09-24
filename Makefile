@@ -18,6 +18,7 @@ bootDir = boot
 kernelDir = kernel
 srcDir = src
 buildDir = build
+driversDir = drivers
 
 ## bootloader
 bootAsm = $(bootDir)/bootloader.s
@@ -52,6 +53,10 @@ checkIntO = $(buildDir)/checkingInt.o
 ## the i/o (outx, inx, io_wait)
 ioC = $(kernelDir)/io.c
 ioO = $(buildDir)/io.o
+
+## keyboard
+keyboardC = $(driversDir)/keyboard/keyboard.c
+keyboardO = $(buildDir)/keyboard.o
 
 all: $(osBin)
 
@@ -90,10 +95,15 @@ $(checkIntO): $(checkIntC)
 	@echo ""
 	$(CC) -c $(checkIntC) -o $(checkIntO) $(CFLAGS)
 
-$(osBin): $(linkerLd) $(bootO) $(kernelO) $(termO) $(picO) $(intsO) $(checkIntO) $(ioO)
+$(keyboardO): $(keyboardC)
+	@echo "Compiling $(keyboardC)"
+	@echo ""
+	$(CC) -I kernel/include -c $(keyboardC) -o $(keyboardO) $(CFLAGS)
+
+$(osBin): $(linkerLd) $(bootO) $(kernelO) $(termO) $(picO) $(intsO) $(checkIntO) $(ioO) $(keyboardO)
 	@echo "Compiling $(osBin)"
 	@echo ""
-	$(CC) -T $(linkerLd) -o $(osBin) $(LINKFLAGS) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO) $(ioO)
+	$(CC) -T $(linkerLd) -o $(osBin) $(LINKFLAGS) $(bootO) $(kernelO) $(termO) $(intsO) $(picO) $(checkIntO) $(ioO) $(keyboardO)
 
 clean:
 	rm -rf $(buildDir)/*.o $(osBin)
