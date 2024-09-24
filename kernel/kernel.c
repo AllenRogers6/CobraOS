@@ -1,5 +1,6 @@
 #include "include/interrupts.h"
 #include "include/terminal.h"
+#include "keyboard.h"
 
 void kernel_main(void) {
 
@@ -10,4 +11,6 @@ void kernel_main(void) {
   enable_interrupts();
 
   init_interrupts();
+
+  void keyboard_interrupt_handler();
 }

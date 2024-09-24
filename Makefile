@@ -68,7 +68,7 @@ $(bootO): $(bootAsm)
 $(kernelO): $(kernelC)
 	@echo "Compiling $(kernelC)"
 	@echo ""
-	$(CC) -c $(kernelC) -o $(kernelO) $(CFLAGS)
+	$(CC) -I kernel/include -c $(kernelC) -o $(kernelO) $(CFLAGS)
 
 $(termO): $(termC)
 	@echo "Compiling $(termC)"
