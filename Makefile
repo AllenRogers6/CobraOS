@@ -20,6 +20,11 @@ srcDir = src
 buildDir = build
 driversDir = drivers
 
+
+## simplify later
+cFiles = $(shell find . -name "*.c")
+
+
 ## bootloader
 bootAsm = $(bootDir)/bootloader.s
 bootO = $(bootDir)/bootloader.o
