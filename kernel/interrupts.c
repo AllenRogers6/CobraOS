@@ -4,7 +4,7 @@
 
 #define idtSize 256
 
-struct idt_entry {
+struct entries {
   uint16_t offset_low;
   uint16_t selector;
   uint8_t zero;
@@ -17,7 +17,7 @@ struct idtr {
   uint64_t base;
 } __attribute__((packed)) lidt;
 
-struct idt_entry idt[idtSize];
+struct entries idt[idtSize];
 
 void set_idt_entry(int n, uint32_t isr_address, uint16_t selector,
                    uint8_t type_attr) {

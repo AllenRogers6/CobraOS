@@ -1,4 +1,5 @@
 #include "include/io.h"
+#include "include/terminal.h"
 
 #define PIC_COMMAND_SLAVE 0xA0
 #define PIC_DATA_MASTER 0x21

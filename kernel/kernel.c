@@ -1,6 +1,6 @@
-#include "include/interrupts.h"
-#include "include/terminal.h"
+#include "interrupts.h"
 #include "keyboard.h"
+#include "terminal.h"
 
 void kernel_main(void) {
 
@@ -12,5 +12,5 @@ void kernel_main(void) {
 
   init_interrupts();
 
-  void keyboard_interrupt_handler();
+  keyboard_interrupt_handler();
 }
