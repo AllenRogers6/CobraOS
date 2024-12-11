@@ -11,7 +11,6 @@ srcDir = src
 buildDir = build
 driversDir = drivers
 
-## simplify later
 cFiles = $(shell find . -name "*.c")
 OBJ = $(patsubst %.c, $(buildDir)/%.o, $(cFiles))
 
@@ -43,4 +42,4 @@ $(osBin): $(OBJ) $(bootO)
 	$(CC) -T $(linkerLd) $(LINKFLAGS) -o $(osBin) $(OBJ) $(bootO)
 
 clean:
-	rm -rf $(buildDir)
+	rm -rf $(buildDir)/*

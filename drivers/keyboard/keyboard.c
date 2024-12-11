@@ -41,5 +41,6 @@ void keyboard_interrupt_handler() {
 
   if (scanCode <= 83) {
     terminal_writestring(scancode_to_key[scanCode]);
+    terminal_writestring("text");
   }
 }
