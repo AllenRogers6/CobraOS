@@ -1,0 +1,9 @@
+## installation
+run ./install.sh
+choose type (x86, arm)
+wait
+
+## removal
+run ./cleanup.sh to remove *.o
+run ./uninstall.sh to remove *.bin, *.iso
+

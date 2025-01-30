@@ -2,7 +2,7 @@ patch 0.0.1
 release date: 01/29/2025
 
 content:
-new dirs, arch/arm, arch/x86, arch/x86/cpu, arch/x86/drivers/screen, libc, docs, docs/patches
+new dirs, arch/arm, arch/x86, arch/x86/cpu, arch/x86/drivers/screen, libc, docs, docs/patches, docs/usage
 added exceptions at arch/x86/cpu
 ./install.sh
 ./cleanup.sh
@@ -13,3 +13,5 @@ keyboard.c is edited
 terminal.c -> screen.c
 IDT fix
 0.0.1.txt added at docs/patches
+added user man
+added temp kernel.c at kernel, at arch/arm/kernel
