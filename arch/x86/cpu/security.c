@@ -1,8 +1,8 @@
 #include "screen.h"
 
 void security(void) {
-  writeStrToScreen("Exception: Security\n");
+  viprint("Exception: Security\n");
   while (1) {
-    asm volatile("hlt");
+    asm volatile("cli; hlt");
   }
 }

@@ -1,8 +1,8 @@
 #include "screen.h"
 
 void breakpoint(void) {
-  writeStrToScreen("Exception: Breakpoint\n");
+  viprint("Exception: Breakpoint\n");
   while (1) {
-    asm volatile("hlt");
+    asm volatile("cli; hlt");
   }
 }

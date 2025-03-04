@@ -8,33 +8,12 @@
 #define SCREEN_CTRL 0x3d4
 #define SCREEN_DATA 0x3d5
 #define VIDEO_MEMORY 0xB8000
-#define SCREEN_WIDTH 80
-#define SCREEN_HEIGHT 25
 
-enum vga_color {
-  VGA_COLOR_BLACK = 0,
-  VGA_COLOR_BLUE = 1,
-  VGA_COLOR_GREEN = 2,
-  VGA_COLOR_CYAN = 3,
-  VGA_COLOR_RED = 4,
-  VGA_COLOR_MAGENTA = 5,
-  VGA_COLOR_BROWN = 6,
-  VGA_COLOR_LIGHT_GREY = 7,
-  VGA_COLOR_DARK_GREY = 8,
-  VGA_COLOR_LIGHT_BLUE = 9,
-  VGA_COLOR_LIGHT_GREEN = 10,
-  VGA_COLOR_LIGHT_CYAN = 11,
-  VGA_COLOR_LIGHT_RED = 12,
-  VGA_COLOR_LIGHT_MAGENTA = 13,
-  VGA_COLOR_LIGHT_BROWN = 14,
-  VGA_COLOR_WHITE = 15,
-};
-
-static inline uint8_t vgaColorEntry(enum vga_color fg, enum vga_color bg) {
+static inline uint8_t vga_color_entry(enum vga_color fg, enum vga_color bg) {
   return fg | bg << 4;
 }
 
-static inline uint16_t vgaEntry(unsigned char uc, uint8_t color) {
+static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
   return (uint16_t)uc | (uint16_t)color << 8;
 }
 
@@ -42,22 +21,39 @@ uint8_t colors;
 static int cursor_row = 0;
 static int cursor_col = 0;
 
-void initScreen(void) {
+void set_text_color(enum vga_color fg, enum vga_color bg);
+void init_screen(void);
+void set_cursor_offset(int offset);
+int get_offset(int col, int row);
+void cprint(char c);
+void vprint(const char *data, size_t size);
+void viprint(const char *data);
+void scroll(void);
+void clear_screen(void);
+void update_cursor(void);
+void hexprint(uint32_t value);
+void has_loaded(void);
+
+void set_text_color(enum vga_color fg, enum vga_color bg) {
+  colors = vga_color_entry(fg, bg);
+}
+
+void init_screen(void) {
   uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
-  colors = vgaColorEntry(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  set_text_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
   for (size_t y = 0; y < SCREEN_HEIGHT; y++) {
     for (size_t x = 0; x < SCREEN_WIDTH; x++) {
-      video_memory[y * SCREEN_WIDTH + x] = vgaEntry(' ', colors);
+      video_memory[y * SCREEN_WIDTH + x] = vga_entry(' ', colors);
     }
   }
 
   cursor_row = 0;
   cursor_col = 0;
-  setCursorOffset(getOffset(0, 0));
+  set_cursor_offset(get_offset(0, 0));
 }
 
-void setCursorOffset(int offset) {
+void set_cursor_offset(int offset) {
   offset /= 2;
   cursor_row = offset / SCREEN_WIDTH;
   cursor_col = offset % SCREEN_WIDTH;
@@ -68,15 +64,30 @@ void setCursorOffset(int offset) {
   outb(SCREEN_DATA, (uint8_t)(offset & 0xff));
 }
 
-int getOffset(int col, int row) { return 2 * (row * SCREEN_WIDTH + col); }
+int get_offset(int col, int row) { return 2 * (row * SCREEN_WIDTH + col); }
 
-void writeChar(char c) {
+void cprint(char c) {
+  uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
+
   if (c == '\n') {
     cursor_row++;
     cursor_col = 0;
+  } else if (c == '\b') {
+    if (cursor_col > 0) {
+      cursor_col--;
+    } else if (cursor_row > 0) {
+      cursor_row--;
+      cursor_col = SCREEN_WIDTH - 1;
+      while (cursor_col > 0 &&
+             video_memory[cursor_row * SCREEN_WIDTH + cursor_col] ==
+                 vga_entry(' ', colors)) {
+        cursor_col--;
+      }
+    }
+    video_memory[cursor_row * SCREEN_WIDTH + cursor_col] =
+        vga_entry(' ', colors);
   } else {
-    uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
-    video_memory[cursor_row * SCREEN_WIDTH + cursor_col] = vgaEntry(c, colors);
+    video_memory[cursor_row * SCREEN_WIDTH + cursor_col] = vga_entry(c, colors);
     cursor_col++;
 
     if (cursor_col >= SCREEN_WIDTH) {
@@ -89,19 +100,20 @@ void writeChar(char c) {
     scroll();
     cursor_row = SCREEN_HEIGHT - 1;
   }
+  if (cursor_col >= SCREEN_WIDTH) {
+    cursor_col = SCREEN_WIDTH - 1;
+  }
 
-  setCursorOffset(getOffset(cursor_col, cursor_row));
+  set_cursor_offset(get_offset(cursor_col, cursor_row));
 }
 
-void writeToScreen(const char *data, size_t size) {
+void vprint(const char *data, size_t size) {
   for (size_t i = 0; i < size; i++) {
-    writeChar(data[i]);
+    cprint(data[i]);
   }
 }
 
-void writeStrToScreen(const char *data) { writeToScreen(data, strlen(data)); }
-
-void writeSpace() { writeStrToScreen(""); }
+void viprint(const char *data) { vprint(data, strlen(data)); }
 
 void scroll() {
   uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
@@ -110,43 +122,46 @@ void scroll() {
 
   for (int col = 0; col < SCREEN_WIDTH; ++col) {
     video_memory[(SCREEN_HEIGHT - 1) * SCREEN_WIDTH + col] =
-        vgaEntry(' ', colors);
+        vga_entry(' ', colors);
   }
+  cursor_row = SCREEN_HEIGHT - 1;
+  cursor_col = 0;
 }
 
-void clearScreen() {
+void clear_screen() {
   uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
 
   for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-    video_memory[i] = vgaEntry(' ', colors);
+    video_memory[i] = vga_entry(' ', colors);
   }
 
   cursor_row = 0;
   cursor_col = 0;
-  setCursorOffset(getOffset(0, 0));
+  set_cursor_offset(get_offset(0, 0));
 }
 
-void updateCursor() {
+void update_cursor() {
   uint16_t pos = cursor_row * SCREEN_WIDTH + cursor_col;
-  outb(0x0F, 0x3D4);
-  outb(pos & 0xFF, 0x3D5);
-  outb(0x0E, 0x3D4);
-  outb((pos >> 8) & 0xFF, 0x3D5);
+  outb(0x3D4, 0x0F);
+  outb(0x3D5, pos & 0xFF);
+  outb(0x3D4, 0x0E);
+  outb(0x3D5, (pos >> 8) & 0xFF);
 }
 
-void writeHex(uint32_t value) {
-  char hexDigits[] = "0123456789ABCDEF";
-  char hexString[9];
-  int i;
-
-  for (i = 7; i >= 0; --i) {
-    hexString[i] = hexDigits[value & 0xF];
+void hexprint(uint32_t value) {
+  char hexString[11] = "0x00000000";
+  for (int i = 9; i >= 2; i--) {
+    hexString[i] = "0123456789ABCDEF"[value & 0xF];
     value >>= 4;
   }
+  viprint(hexString);
+  viprint("\n");
+}
 
-  hexString[8] = '\0';
-
-  writeStrToScreen("0x");
-  writeStrToScreen(hexString);
-  writeStrToScreen("\n");
+void has_loaded() {
+  viprint("[ ");
+  set_text_color(VGA_COLOR_GREEN, VGA_COLOR_BLACK);
+  viprint("yes");
+  set_text_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  viprint(" ] ");
 }

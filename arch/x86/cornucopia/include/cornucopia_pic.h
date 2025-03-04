@@ -1,0 +1,22 @@
+#ifndef CORNUCOPIA_PIC_H
+#define CORNUCOPIA_PIC_H
+
+#define PIC_COMMAND_MASTER 0x20
+#define PIC_DATA_MASTER 0x21
+#define PIC_COMMAND_SLAVE 0xA0
+#define PIC_DATA_SLAVE 0xA1
+
+#define ICW1_INIT 0x11
+#define ICW1_ICW4 0x01
+#define ICW4_8086 0x01
+
+#define PIC_OFFSET_MASTER 0x20
+#define PIC_OFFSET_SLAVE 0x28
+
+#define PIC_MASTER_ICW3 0x04
+#define PIC_SLAVE_ICW3 0x02
+
+#define PIC_READ_IRR 0x0a
+#define PIC_READ_ISR 0x0b
+
+#endif // !DEBUG

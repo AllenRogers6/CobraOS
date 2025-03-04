@@ -4,11 +4,11 @@
 #include "stddef.h"
 #include "stdint.h"
 
-typedef enum { QWERTY, AZERTY, DVORAK } KeyboardLayout;
+typedef enum { QWERTY, AZERTY, DVORAK } keyboard_layout;
 
-void asciiConverter(uint8_t scancode, char str[], size_t size);
-void keyboardHandler();
-void letterToScreen(uint8_t scancode);
-void setKeyboardLayout(KeyboardLayout layout);
+void ascii_converter(uint8_t scancode, char str[], size_t size);
+void letter_to_screen(uint8_t scancode);
+void keyboard_handler(void);
+void set_keyboard_layout(keyboard_layout layout);
 
 #endif // !KEYBOARD_H

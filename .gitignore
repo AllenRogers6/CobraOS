@@ -2,3 +2,5 @@
 *.bin
 *.iso
 *.cfg
+*.txt
+*.hex

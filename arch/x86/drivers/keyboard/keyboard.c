@@ -1,168 +1,203 @@
 #include "keyboard.h"
-#include "apic.h"
 #include "io.h"
+#include "key_maps.h"
+#include "ps2.h"
 #include "screen.h"
-#include "stddef.h"
-#include "stdint.h"
 #include "stdio.h"
 #include "string.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
+/*definitions*/
+#define BUFFER_SIZE 256
+#define KEYBOARD_STATUS_PORT 0x64
+#define KEYBOARD_DATA_PORT 0x60
+
+/*our static vars for this file*/
 static int shift = 0;
 static int caps = 0;
-static KeyboardLayout currentLayout = QWERTY;
+static int ctrl = 0;
+static int alt = 0;
+static keyboard_layout current_layout = QWERTY;
+static bool extended_key = false;
+static char keyboard_buffer[BUFFER_SIZE];
+static int buffer_index = 0;
+static int cursor_row = 0;
+static int cursor_col = 0;
+uint8_t fpu_state[512];
 
-static const char *qwerty_lowercase_key_map[] = {
-    "ERROR",     "ESC",   "1",        "2",  "3",  "4",      "5",
-    "6",         "7",     "8",        "9",  "0",  "-",      "=",
-    "Backspace", "Tab",   "q",        "w",  "e",  "r",      "t",
-    "y",         "u",     "i",        "o",  "p",  "[",      "]",
-    "ENTER",     "LCtrl", "a",        "s",  "d",  "f",      "g",
-    "h",         "j",     "k",        "l",  ";",  "'",      "`",
-    "LShift",    "\\",    "z",        "x",  "c",  "v",      "b",
-    "n",         "m",     ",",        ".",  "/",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-static const char *qwerty_uppercase_key_map[] = {
-    "ERROR",     "ESC",   "!",        "@",  "#",  "$",      "%",
-    "^",         "&",     "*",        "(",  ")",  "_",      "+",
-    "Backspace", "Tab",   "Q",        "W",  "E",  "R",      "T",
-    "Y",         "U",     "I",        "O",  "P",  "{",      "}",
-    "ENTER",     "LCtrl", "A",        "S",  "D",  "F",      "G",
-    "H",         "J",     "K",        "L",  ":",  "\"",     "~",
-    "LShift",    "|",     "Z",        "X",  "C",  "V",      "B",
-    "N",         "M",     "<",        ">",  "?",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-
-static const char *azerty_lowercase_key_map[] = {
-    "ERROR",     "ESC",   "&",        "é",  "\"", "'",      "(",
-    "-",         "è",     "_",        "ç",  "à",  ")",      "=",
-    "Backspace", "Tab",   "a",        "z",  "e",  "r",      "t",
-    "y",         "u",     "i",        "o",  "p",  "^",      "$",
-    "ENTER",     "LCtrl", "q",        "s",  "d",  "f",      "g",
-    "h",         "j",     "k",        "l",  "m",  "ù",      "",
-    "LShift",    "\\",    "w",        "x",  "c",  "v",      "b",
-    "n",         ",",     ";",        ":",  "!",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-
-static const char *azerty_uppercase_key_map[] = {
-    "ERROR",     "ESC",   "1",        "2",  "3",  "4",      "5",
-    "6",         "7",     "8",        "9",  "0",  "°",      "+",
-    "Backspace", "Tab",   "A",        "Z",  "E",  "R",      "T",
-    "Y",         "U",     "I",        "O",  "P",  "¨",      "*",
-    "ENTER",     "LCtrl", "Q",        "S",  "D",  "F",      "G",
-    "H",         "J",     "K",        "L",  "M",  "%",      "~",
-    "LShift",    "|",     "W",        "X",  "C",  "V",      "B",
-    "N",         "?",     ".",        "/",  "§",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-
-static const char *dvorak_lowercase_key_map[] = {
-    "ERROR",     "ESC",   "1",        "2",  "3",  "4",      "5",
-    "6",         "7",     "8",        "9",  "0",  "[",      "]",
-    "Backspace", "Tab",   "'",        ",",  ".",  "p",      "y",
-    "f",         "g",     "c",        "r",  "l",  "/",      "=",
-    "ENTER",     "LCtrl", "a",        "o",  "e",  "u",      "i",
-    "d",         "h",     "t",        "n",  "s",  "-",      "",
-    "LShift",    "\\",    ";",        "q",  "j",  "k",      "x",
-    "b",         "m",     "w",        "v",  "z",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-
-static const char *dvorak_uppercase_key_map[] = {
-    "ERROR",     "ESC",   "!",        "@",  "#",  "$",      "%",
-    "^",         "&",     "*",        "(",  ")",  "{",      "}",
-    "Backspace", "Tab",   "\"",       "<",  ">",  "P",      "Y",
-    "F",         "G",     "C",        "R",  "L",  "?",      "+",
-    "ENTER",     "LCtrl", "A",        "O",  "E",  "U",      "I",
-    "D",         "H",     "T",        "N",  "S",  "_",      "~",
-    "LShift",    "|",     ":",        "Q",  "J",  "K",      "X",
-    "B",         "M",     "W",        "V",  "Z",  "RShift", "Keypad *",
-    "LAlt",      "Space", "CapsLock", "F1", "F2", "F3",     "F4",
-    "F5",        "F6",    "F7",       "F8", "F9", "F10",    "NumLock",
-    "ScrollLock"};
-
+/*get the current keymap*/
 const char **getKeyMap() {
-  switch (currentLayout) {
+  static const char *fallback_map[MAX_SCANCODE] = {0};
+  switch (current_layout) {
   case QWERTY:
-    return shift ? (caps ? qwerty_lowercase_key_map : qwerty_uppercase_key_map)
-                 : (caps ? qwerty_uppercase_key_map : qwerty_lowercase_key_map);
+    return (shift || caps) ? qwerty_uppercase_key_map
+                           : qwerty_lowercase_key_map;
   case AZERTY:
-    return shift ? (caps ? azerty_lowercase_key_map : azerty_uppercase_key_map)
-                 : (caps ? azerty_uppercase_key_map : azerty_lowercase_key_map);
-    break;
+    return (shift || caps) ? azerty_uppercase_key_map
+                           : azerty_lowercase_key_map;
   case DVORAK:
-    return shift ? (caps ? dvorak_lowercase_key_map : dvorak_uppercase_key_map)
-                 : (caps ? dvorak_uppercase_key_map : dvorak_lowercase_key_map);
+    return (shift || caps) ? dvorak_uppercase_key_map
+                           : dvorak_lowercase_key_map;
+  default:
+    return fallback_map;
+  }
+}
+
+/*convert to ascii from scancode*/
+void ascii_converter(uint8_t scancode, char str[], size_t size) {
+  const char **map = getKeyMap();
+  if (scancode >= MAX_SCANCODE || !map[scancode]) {
+    snprintf(str, size, "Unknown: 0x%X", scancode);
+    return;
+  }
+
+  strncpy(str, map[scancode], size - 1);
+  str[size - 1] = '\0';
+}
+
+/*check for stack corruption*/
+void check_stack() {
+  uint32_t canary = 0xDEADBEEF;
+  uint32_t *stack_canary = &canary;
+  if (*stack_canary != 0xDEADBEEF) {
+    viprint("Stack corruption detected\n");
+  } else {
+    viprint("Stack healthy\n");
+  }
+}
+
+/*print letter to screen after translation*/
+void letter_to_screen(uint8_t scancode) {
+  char scancode_ascii[85] = {0};
+
+  switch (scancode) {
+  case 0x2A:
+  case 0x36:
+    shift = 1;
+    break;
+  case 0xAA:
+  case 0xB6:
+    shift = 0;
+    break;
+  case 0x3A:
+    caps = !caps;
+    break;
+  case 0x1D:
+    ctrl = 1;
+    break;
+  case 0x9D:
+    ctrl = 0;
+    break;
+  case 0x38:
+    alt = 1;
+    break;
+  case 0xB8:
+    alt = 0;
     break;
   default:
-    return shift ? (caps ? qwerty_lowercase_key_map : qwerty_uppercase_key_map)
-                 : (caps ? qwerty_uppercase_key_map : qwerty_lowercase_key_map);
+    ascii_converter(scancode, scancode_ascii, sizeof(scancode_ascii));
+    viprint(scancode_ascii);
+    cprint('\n');
+    break;
   }
 }
 
-void asciiConverter(uint8_t scancode, char str[], size_t size) {
-  const char **map = getKeyMap();
-  size_t mapSize =
-      sizeof(qwerty_lowercase_key_map) / sizeof(qwerty_lowercase_key_map[0]);
+/*debug, esp and check stack health*/
+void debug_kb_handler(void) {
+  uint32_t esp;
+  asm volatile("mov %%esp, %0" : "=r"(esp));
+  viprint("Stack pointer: ");
+  hexprint(esp);
+  viprint("\n");
 
-  if (scancode >= 0xE0) {
-    snprintf(str, size, "Extended Scancode: 0x%X", scancode);
-  } else if (scancode < mapSize) {
-    strncpy(str, map[scancode], size - 1);
-    str[size - 1] = '\0';
-  } else {
-    snprintf(str, size, "Invalid Scancode: 0x%X", scancode);
-  }
+  check_stack();
 }
 
-void letterToScreen(uint8_t scancode) {
-  char scancodeAscii[32];
-  if (scancode == 0x2A || scancode == 0x36) {
-    shift = 1; // down
-  } else if (scancode == 0xAA || scancode == 0xB6) {
-    shift = 0; // up
-  } else if (scancode == 0x3A) {
-    caps = !caps; // caps on
-    writeStrToScreen(caps ? "Caps Lock Enabled\n" : "Caps Lock Disabled\n");
+/*kb handler*/
+void keyboard_handler(void) {
+  viprint("Keyboard Interrupt\n\n");
+
+  asm volatile("pusha");
+  asm volatile("pushf");
+
+  int timeout = 1000;
+  while ((inb(KEYBOARD_STATUS_PORT) & 0x02) && --timeout)
+    ;
+  if (timeout == 0) {
+    viprint("Keyboard controller timeout\n");
+    goto eoi;
   }
 
-  if (scancode >= 0x80) {
-    writeStrToScreen("Key up: ");
-    scancode -= 0x80;
-  } else {
-    writeStrToScreen("Key down: ");
+  asm volatile("fxsave %0" : : "m"(fpu_state));
+
+  uint8_t scancode = inb(KEYBOARD_DATA_PORT);
+
+  if (scancode == 0xE0) {
+    extended_key = true;
+    viprint("Arrow keys");
+    goto eoi;
   }
 
-  asciiConverter(scancode & 0x7F, scancodeAscii, sizeof(scancodeAscii));
-  writeStrToScreen(scancodeAscii);
-  writeChar('\n');
+  if (extended_key) {
+    switch (scancode) {
+    case 0x48:
+      cursor_row = (cursor_row > 0) ? cursor_row - 1 : 0;
+      break;
+    case 0x50:
+      cursor_row =
+          (cursor_row < SCREEN_HEIGHT - 1) ? cursor_row + 1 : SCREEN_HEIGHT - 1;
+      break;
+    case 0x4B:
+      cursor_col = (cursor_col > 0) ? cursor_col - 1 : 0;
+      break;
+    case 0x4D:
+      cursor_col =
+          (cursor_col < SCREEN_WIDTH - 1) ? cursor_col + 1 : SCREEN_WIDTH - 1;
+      break;
+    default:
+      printf("Unknown extended scancode: %X\n", scancode);
+      break;
+    }
+    set_cursor_offset(get_offset(cursor_col, cursor_row));
+    extended_key = false;
+  } else if (scancode == 0x0E && buffer_index > 0) {
+    buffer_index--;
+    cprint('\b');
+  } else if (!(scancode & 0x80)) {
+    if (buffer_index >= BUFFER_SIZE - 1) {
+      viprint("Keyboard buffer overflow\n");
+      goto eoi;
+    }
+    letter_to_screen(scancode);
+    keyboard_buffer[buffer_index++] = scancode;
+  }
+
+eoi:
+  outb(0x20, 0x20);
+
+  // debug_kb_handler();
+
+  asm volatile("fxrstor %0" : : "m"(fpu_state));
+  asm volatile("popf");
+  asm volatile("popa");
+  asm volatile("iret");
 }
 
-void keyboardHandler() {
-  writeStrToScreen("Keyboard Interrupt\n");
-  uint8_t scancode = inb(0x60);
-  letterToScreen(scancode);
-  lapic_eoi();
-}
-
-void setKeyboardLayout(KeyboardLayout layout) {
-  currentLayout = layout;
+/*set the layout for the kb*/
+void set_keyboard_layout(keyboard_layout layout) {
+  current_layout = layout;
+  has_loaded();
   switch (layout) {
   case QWERTY:
-    writeStrToScreen("Keyboard Layout: QWERTY\n");
+    viprint("Keyboard Layout: QWERTY\n");
     break;
   case AZERTY:
-    writeStrToScreen("Keyboard Layout: AZERTY\n");
+    viprint("Keyboard Layout: AZERTY\n");
     break;
   case DVORAK:
-    writeStrToScreen("Keyboard Layout: DVORAK\n");
+    viprint("Keyboard Layout: DVORAK\n");
     break;
   }
 }

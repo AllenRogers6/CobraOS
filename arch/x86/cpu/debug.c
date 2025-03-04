@@ -1,8 +1,8 @@
 #include "screen.h"
 
 void debug(void) {
-  writeStrToScreen("Exception: Debug\n");
+  viprint("Exception: Debug\n");
   while (1) {
-    asm volatile("hlt");
+    asm volatile("cli; hlt");
   }
 }

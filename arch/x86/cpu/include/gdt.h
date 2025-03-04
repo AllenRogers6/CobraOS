@@ -1,0 +1,36 @@
+#ifndef GDT_H
+#define GDT_H
+
+#include <stdint.h>
+
+#define GDT_ENTRIES 7
+#define CODE_SEGMENT 0x08
+#define DATA_SEGMENT 0x10
+#define USER_CODE_SEGMENT 0x18
+#define USER_DATA_SEGMENT 0x20
+#define TSS_SEGMENT 0x28
+#define LDT_SEGMENT 0x30
+
+struct gdt_entry {
+  uint16_t limit_low;
+  uint16_t base_low;
+  uint8_t base_middle;
+  uint8_t access;
+  uint8_t granularity;
+  uint8_t base_high;
+} __attribute__((packed));
+
+struct gdt_ptr {
+  uint16_t limit;
+  uint32_t base;
+} __attribute__((packed));
+
+extern struct gdt_entry gdt[GDT_ENTRIES];
+
+void gdt_set_gate(int index, uint32_t base, uint32_t limit, uint8_t access,
+                  uint8_t granularity);
+void init_gdt();
+void load_gdt();
+void reload_segment_registers();
+
+#endif

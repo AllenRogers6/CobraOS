@@ -1,0 +1,7 @@
+#ifndef CORNUCOPIA_PS2_H
+#define CORNUCOPIA_PS2_H
+
+#define KB_DATA_PORT 0x60
+#define PS2_STATUS_CMD_PORT 0x64
+
+#endif // !DEBUG

@@ -1,0 +1,8 @@
+#ifndef CORNUCOPIA_LPT_H
+#define CORNUCOPIA_LPT_H
+
+#define LPT1_DATA_PORT 0x378
+#define LPT1_CONTROL_PORT 0x37A
+#define LPT1_STATUS_PORT 0x379
+
+#endif // !DEBUG
