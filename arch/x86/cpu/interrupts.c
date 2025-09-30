@@ -40,6 +40,8 @@
 #define INT_GATE 0x8E
 #define TRAP_GATE 0x8F
 #define TASK_GATE 0x5
+#define DPL0 0x00
+#define DPL3 0x60
 
 struct entries {
   uint16_t low;
@@ -102,12 +104,12 @@ void default_handler(int vector) {
 }
 
 void print_idt_entry(uint8_t vector) {
-  uint32_t idt_base;
+  uintptr_t *idt_base = NULL;
   uintptr_t *idt_entry = (uintptr_t *)(idt_base + vector * 8);
-  uint32_t low_addr = idt_entry[0] & 0xFFFF;
-  uint32_t high_addr = (idt_entry[0] >> 16) & 0xFFFF;
-  uint8_t flags = (idt_entry[1] >> 8) & 0xFF;
-  uint8_t selector = idt_entry[1] & 0xFF;
+  uintptr_t low_addr = idt_entry[0] & 0xFFFF;
+  uintptr_t high_addr = (idt_entry[0] >> 16) & 0xFFFF;
+  uintptr_t flags = (idt_entry[1] >> 8) & 0xFF;
+  uintptr_t selector = idt_entry[1] & 0xFF;
 
   viprint("IDT Entry for Vector: ");
   hexprint(vector);
@@ -193,29 +195,29 @@ void init_ints() {
   set_idt_entry(0, (uintptr_t)divide_by_zero, 0x08, TRAP_GATE);
   set_idt_entry(1, (uintptr_t)debug, 0x08, TRAP_GATE);
   set_idt_entry(2, (uintptr_t)nmi, 0x08, INT_GATE);
-  set_idt_entry(3, (uintptr_t)breakpoint, 0x08, TRAP_GATE);
-  set_idt_entry(4, (uintptr_t)overflow, 0x08, TRAP_GATE);
+  set_idt_entry(3, (uintptr_t)breakpoint, 0x08, TRAP_GATE | DPL3);
+  set_idt_entry(4, (uintptr_t)overflow, 0x08, TRAP_GATE | DPL3);
   set_idt_entry(5, (uintptr_t)bound_range_exceeded, 0x08, TRAP_GATE);
   set_idt_entry(6, (uintptr_t)invalid_opcode, 0x08, TRAP_GATE);
   set_idt_entry(7, (uintptr_t)dev_not_found, 0x08, TRAP_GATE);
-  set_idt_entry(8, (uintptr_t)double_fault_exception, 0x08, TRAP_GATE);
+  set_idt_entry(8, (uintptr_t)double_fault_exception, 0x08, INT_GATE);
   set_idt_entry(9, (uintptr_t)co_seg_overrun, 0x08, INT_GATE);
   set_idt_entry(10, (uintptr_t)invalid_tss, 0x08, INT_GATE);
   set_idt_entry(11, (uintptr_t)seg_not_present, 0x08, INT_GATE);
-  set_idt_entry(12, (uintptr_t)stack_seg_fault, 0x08, TRAP_GATE);
-  set_idt_entry(13, (uintptr_t)gpf, 0x08, TRAP_GATE);
-  set_idt_entry(14, (uintptr_t)page_fault_exception, 0x08, TRAP_GATE);
+  set_idt_entry(12, (uintptr_t)stack_seg_fault, 0x08, INT_GATE);
+  set_idt_entry(13, (uintptr_t)gpf, 0x08, INT_GATE);
+  set_idt_entry(14, (uintptr_t)page_fault_exception, 0x08, INT_GATE);
   set_idt_entry(16, (uintptr_t)floating_point_error, 0x08, INT_GATE);
-  set_idt_entry(17, (uintptr_t)alignment_check, 0x08, TRAP_GATE);
-  set_idt_entry(18, (uintptr_t)machine_check, 0x08, INT_GATE);
+  set_idt_entry(17, (uintptr_t)alignment_check, 0x08, INT_GATE);
   set_idt_entry(19, (uintptr_t)simd_floating_point, 0x08, INT_GATE);
-  set_idt_entry(20, (uintptr_t)virtualization, 0x08, TRAP_GATE);
+  set_idt_entry(18, (uintptr_t)machine_check, 0x08, INT_GATE);
+  set_idt_entry(20, (uintptr_t)virtualization, 0x08, INT_GATE);
   set_idt_entry(21, (uintptr_t)control_protection, 0x08, INT_GATE);
   set_idt_entry(28, (uintptr_t)hypervisor_injection, 0x08, INT_GATE);
   set_idt_entry(29, (uintptr_t)vmm_comms, 0x08, INT_GATE);
   set_idt_entry(30, (uintptr_t)security, 0x08, INT_GATE);
   set_idt_entry(32, (uintptr_t)pit_handler, 0x08, INT_GATE);
-  set_idt_entry(33, (uintptr_t)keyboard_handler, 0x08, INT_GATE);
+  set_idt_entry(33, (uintptr_t)keyboard_handler, 0x08, INT_GATE | DPL0);
 
   viprint("Remapping\n");
   remap();

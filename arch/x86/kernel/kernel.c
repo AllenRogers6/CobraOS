@@ -51,10 +51,14 @@ void get_things() {
 }
 
 /*check mode for cr0*/
-int check_cpu_mode_cr0() {
+/*int check_cpu_mode_cr0() {
   unsigned int cr0;
 
-  __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+  __asm__ volatile("mov %%cr0, %%eax\n\t"
+                   "mov %%eax, %0"
+                   : "=m"(cr0)
+                   :
+                   : "%eax");
 
   if (cr0 & 0x1) {
 
@@ -63,7 +67,7 @@ int check_cpu_mode_cr0() {
 
     return 0;
   }
-}
+}*/
 
 /*get pic*/
 uint8_t get_pic(uint8_t ocw3) {
@@ -113,14 +117,14 @@ int check_cpu_mode_cs_reg() {
 
 /*function to check current mode for cpuid, cs, and cr0*/
 void check_state() {
-  if (check_cpu_mode_cr0()) {
+  /*if (check_cpu_mode_cr0()) {
 
     viprint("Protected Mode for CR\n");
 
   } else {
 
     viprint("Real Mode for CR\n");
-  }
+  }*/
 
   if (check_cpu_mode_cpuid()) {
 
@@ -189,15 +193,15 @@ void kernel(void) {
 
   init_ints();
 
-  set_keyboard_layout(QWERTY);
-
   unmask_kb();
+
+  set_keyboard_layout(QWERTY);
 
   has_loaded();
   viprint("Content load complete\n");
   viprint("\nCobra\n\n");
 
-  while (1) {
-    asm volatile("hlt");
+  for (;;) {
+    __asm__ volatile("hlt");
   }
 }

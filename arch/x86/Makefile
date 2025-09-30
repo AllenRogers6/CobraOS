@@ -1,8 +1,8 @@
 ## tools 
-AS = i686-elf-as
-CC = i686-elf-gcc
-CFLAGS = -I kernel/include -I drivers/screen/include -I drivers/keyboard/include -I ../../lib/include/ -I cpu/include -I cornucopia/include -ffreestanding -O2 -Wall -Wextra -nostartfiles -nostdlib 
-LINKFLAGS = -nostdlib -z max-page-size=0x1000
+AS = as
+CC = gcc
+CFLAGS = -I kernel/include -I drivers/screen/include -I drivers/keyboard/include -I ../../lib/include/ -I cpu/include -I cornucopia/include -ffreestanding -O0 -Wall -Wextra -nostartfiles -nostdlib -m32 -g -fno-omit-frame-pointer
+LINKFLAGS = -ffreestanding  -nostdlib -z max-page-size=0x1000
 
 
 ## main dirs 
@@ -17,6 +17,7 @@ cpuDir = cpu
 ## file finder and converts
 cFiles = $(shell find . -name "*.c")
 OBJ = $(patsubst %.c, $(buildDir)/%.o, $(cFiles))
+
 
 ## make the build dirs
 $(shell mkdir -p $(buildDir) $(buildDir)/$(bootDir) $(buildDir)/$(kernelDir) $(buildDir)/$(driversDir)/keyboard $(buildDir)/$(libDir) $(buildDir)/$(driversDir)/screen $(buildDir)/$(cpuDir))
@@ -42,7 +43,7 @@ all: $(isoFile)
 ## asm boot
 $(bootO): $(bootAsm)
 	@echo "Assembling $(bootAsm)"
-	$(AS) $< -o $@
+	$(AS) --32 $(bootAsm) -o $(bootO)
 
 ## compile all .c
 $(buildDir)/%.o: %.c
@@ -52,7 +53,7 @@ $(buildDir)/%.o: %.c
 ## link
 $(osBin): $(OBJ) $(bootO) $(libO)
 	@echo "Linking $(osBin)"
-	$(CC) -T $(linkerLd) $(LINKFLAGS) -o $(osBin) $(bootO) $(OBJ) $(libO)
+	$(CC) -m32 -T $(linkerLd) $(LINKFLAGS) -o $(osBin) $(bootO) $(OBJ) $(libO)
 
 ## create required dirs for iso placement 
 $(isoFile): $(osBin)

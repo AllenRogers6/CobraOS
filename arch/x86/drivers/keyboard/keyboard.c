@@ -115,9 +115,7 @@ void debug_kb_handler(void) {
   check_stack();
 }
 
-/*kb handler*/
 void keyboard_handler(void) {
-  viprint("Keyboard Interrupt\n\n");
 
   asm volatile("pusha");
   asm volatile("pushf");
@@ -129,8 +127,6 @@ void keyboard_handler(void) {
     viprint("Keyboard controller timeout\n");
     goto eoi;
   }
-
-  asm volatile("fxsave %0" : : "m"(fpu_state));
 
   uint8_t scancode = inb(KEYBOARD_DATA_PORT);
 
@@ -177,12 +173,9 @@ void keyboard_handler(void) {
 eoi:
   outb(0x20, 0x20);
 
-  // debug_kb_handler();
-
   asm volatile("fxrstor %0" : : "m"(fpu_state));
   asm volatile("popf");
   asm volatile("popa");
-  asm volatile("iret");
 }
 
 /*set the layout for the kb*/

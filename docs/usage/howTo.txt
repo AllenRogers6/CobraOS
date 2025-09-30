@@ -7,3 +7,6 @@ wait
 run ./cleanup.sh to remove *.o
 run ./uninstall.sh to remove *.bin, *.iso
 
+## testing 
+run qemu-system-i386 -cdrom iso_file
+

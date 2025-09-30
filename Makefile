@@ -1,5 +1,5 @@
-CC = i686-elf-gcc
-CFLAGS = -I arch/x86/drivers/screen/include -I lib/include -ffreestanding -O2 -Wall -Wextra -nostartfiles -nostdlib 
+CC = gcc
+CFLAGS = -I arch/x86/drivers/screen/include -I lib/include -ffreestanding -O0 -Wall -Wextra -nostartfiles -nostdlib -m32 -g -fno-omit-frame-pointer
 libDir = lib
 buildDir = build
 
