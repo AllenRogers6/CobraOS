@@ -1,4 +1,5 @@
 #include "keyboard.h"
+#include "fpu.h"
 #include "io.h"
 #include "key_maps.h"
 #include "ps2.h"
@@ -9,52 +10,66 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*definitions*/
+#define SCREEN_WIDTH 80
+#define SCREEN_HEIGHT 25
+#define VGA_COLOR_WHITE 15
+#define VGA_COLOR_BLACK 0
+
 #define BUFFER_SIZE 256
 #define KEYBOARD_STATUS_PORT 0x64
 #define KEYBOARD_DATA_PORT 0x60
 
-/*our static vars for this file*/
-static int shift = 0;
-static int caps = 0;
-static int ctrl = 0;
-static int alt = 0;
-static keyboard_layout current_layout = QWERTY;
-static bool extended_key = false;
-static char keyboard_buffer[BUFFER_SIZE];
-static int buffer_index = 0;
-static int cursor_row = 0;
-static int cursor_col = 0;
-uint8_t fpu_state[512];
+extern uint32_t __stack_chk_guard;
+#define STACK_CANARY __stack_chk_guard
 
-/*get the current keymap*/
-const char **getKeyMap() {
-  static const char *fallback_map[MAX_SCANCODE] = {0};
-  switch (current_layout) {
-  case QWERTY:
-    return (shift || caps) ? qwerty_uppercase_key_map
-                           : qwerty_lowercase_key_map;
-  case AZERTY:
-    return (shift || caps) ? azerty_uppercase_key_map
-                           : azerty_lowercase_key_map;
-  case DVORAK:
-    return (shift || caps) ? dvorak_uppercase_key_map
-                           : dvorak_lowercase_key_map;
-  default:
-    return fallback_map;
-  }
+typedef struct {
+  bool shift;
+  bool caps;
+  bool ctrl;
+  bool alt;
+  bool gui;
+  bool extended;
+} modifier_state;
+
+static volatile modifier_state mods = {0};
+static keyboard_layout current_layout = QWERTY;
+static char keyboard_buffer[BUFFER_SIZE];
+static volatile int buffer_index = 0;
+static point cursor_pos = {0, 0};
+static volatile bool buffer_overflow = false;
+
+static fpu_context_t fpu_ctx __attribute__((aligned(16)));
+
+static keymap layouts[LAYOUT_COUNT] = {
+    [QWERTY] = {.name = "QWERTY",
+                .lowercase = {/* Your QWERTY lowercase map */},
+                .uppercase = {/* Your QWERTY uppercase map */}},
+
+};
+
+void init_keyboard(void) {
+
+  ps2_init();
+
+  set_keyboard_layout(QWERTY);
+
+  outb(0x21, inb(0x21) & 0xFD);
+
+  printf("Keyboard initialized with %s layout\n", layouts[current_layout].name);
 }
 
-/*convert to ascii from scancode*/
-void ascii_converter(uint8_t scancode, char str[], size_t size) {
-  const char **map = getKeyMap();
-  if (scancode >= MAX_SCANCODE || !map[scancode]) {
-    snprintf(str, size, "Unknown: 0x%X", scancode);
-    return;
-  }
+const char *get_char_from_scancode(uint8_t scancode) {
+  if (scancode >= MAX_SCANCODE)
+    return NULL;
 
-  strncpy(str, map[scancode], size - 1);
-  str[size - 1] = '\0';
+  modifier_state local_mods;
+  local_mods.shift = mods.shift;
+  local_mods.caps = mods.caps;
+
+  const keymap *map = &layouts[current_layout];
+
+  return (local_mods.shift ^ local_mods.caps) ? map->uppercase[scancode]
+                                              : map->lowercase[scancode];
 }
 
 /*check for stack corruption*/
@@ -162,35 +177,210 @@ void keyboard_handler(void) {
     buffer_index--;
     cprint('\b');
   } else if (!(scancode & 0x80)) {
-    if (buffer_index >= BUFFER_SIZE - 1) {
-      viprint("Keyboard buffer overflow\n");
-      goto eoi;
+    void buffer_add_char(char c) {
+      if (buffer_index >= BUFFER_SIZE - 1) {
+        buffer_overflow = true;
+        return;
+      }
+      letter_to_screen(scancode);
+      keyboard_buffer[buffer_index++] = scancode;
     }
-    letter_to_screen(scancode);
-    keyboard_buffer[buffer_index++] = scancode;
+
+  eoi:
+    outb(0x20, 0x20);
+
+    asm volatile("fxrstor %0" : : "m"(fpu_state));
+    asm volatile("popf");
+    asm volatile("popa");
+
+    keyboard_buffer[buffer_index++] = c;
+    keyboard_buffer[buffer_index] = '\0';
   }
 
-eoi:
-  outb(0x20, 0x20);
+  void handle_special_keys(uint8_t scancode) {
 
-  asm volatile("fxrstor %0" : : "m"(fpu_state));
-  asm volatile("popf");
-  asm volatile("popa");
-}
+    modifier_state local_mods;
+    local_mods.shift = mods.shift;
+    local_mods.caps = mods.caps;
+    local_mods.ctrl = mods.ctrl;
+    local_mods.alt = mods.alt;
+    local_mods.gui = mods.gui;
+    local_mods.extended = mods.extended;
 
-/*set the layout for the kb*/
-void set_keyboard_layout(keyboard_layout layout) {
-  current_layout = layout;
-  has_loaded();
-  switch (layout) {
-  case QWERTY:
-    viprint("Keyboard Layout: QWERTY\n");
-    break;
-  case AZERTY:
-    viprint("Keyboard Layout: AZERTY\n");
-    break;
-  case DVORAK:
-    viprint("Keyboard Layout: DVORAK\n");
-    break;
+    switch (scancode) {
+    case 0x2A:
+    case 0x36:
+      local_mods.shift = true;
+      break;
+    case 0xAA:
+    case 0xB6:
+      local_mods.shift = false;
+      break;
+
+    case 0x3A:
+      local_mods.caps = !local_mods.caps;
+      break;
+
+    case 0x1D:
+      local_mods.ctrl = true;
+      break;
+    case 0x9D:
+      local_mods.ctrl = false;
+      break;
+
+    case 0x38:
+      local_mods.alt = true;
+      break;
+    case 0xB8:
+      local_mods.alt = false;
+      break;
+
+    case 0x5B:
+    case 0x5C:
+      local_mods.gui = true;
+      break;
+    case 0xDB:
+    case 0xDC:
+      local_mods.gui = false;
+      break;
+
+    case 0xE0:
+    case 0xE1:
+      local_mods.extended = true;
+      break;
+
+    default:
+      break;
+    }
+
+    mods = local_mods;
   }
-}
+
+  void handle_cursor_movement(uint8_t scancode) {
+    if (!mods.extended)
+      return;
+
+    point local_cursor = cursor_pos;
+
+    switch (scancode) {
+    case 0x48:
+      local_cursor.y = (local_cursor.y > 0) ? local_cursor.y - 1 : 0;
+      break;
+    case 0x50:
+      local_cursor.y = (local_cursor.y < SCREEN_HEIGHT - 1) ? local_cursor.y + 1
+                                                            : SCREEN_HEIGHT - 1;
+      break;
+    case 0x4B:
+      local_cursor.x = (local_cursor.x > 0) ? local_cursor.x - 1 : 0;
+      break;
+    case 0x4D:
+      local_cursor.x = (local_cursor.x < SCREEN_WIDTH - 1) ? local_cursor.x + 1
+                                                           : SCREEN_WIDTH - 1;
+      break;
+    case 0x47:
+      local_cursor.x = 0;
+      break;
+    case 0x4F:
+      local_cursor.x = SCREEN_WIDTH - 1;
+      break;
+    case 0x49:
+      local_cursor.y = (local_cursor.y > SCREEN_HEIGHT / 2)
+                           ? local_cursor.y - SCREEN_HEIGHT / 2
+                           : 0;
+      break;
+    case 0x51:
+      local_cursor.y = (local_cursor.y < SCREEN_HEIGHT - SCREEN_HEIGHT / 2)
+                           ? local_cursor.y + SCREEN_HEIGHT / 2
+                           : SCREEN_HEIGHT - 1;
+      break;
+    default:
+      break;
+    }
+
+    cursor_pos = local_cursor;
+    set_cursor_position(cursor_pos.x, cursor_pos.y);
+  }
+
+  void process_character(uint8_t scancode) {
+    if (scancode & 0x80)
+      return;
+
+    const char *ch = get_char_from_scancode(scancode);
+    if (!ch || !*ch)
+      return;
+
+    if (mods.ctrl && ch[0] >= '@' && ch[0] <= '_') {
+      char ctrl_char = ch[0] - '@';
+      buffer_add_char(ctrl_char);
+      cprint(ctrl_char, VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      return;
+    }
+
+    buffer_add_char(ch[0]);
+    cprint(ch[0], VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  }
+
+  void keyboard_handler(void) {
+
+    if (!check_stack_integrity()) {
+
+      viprint("Stack corruption detected in keyboard handler!");
+
+      outb(0x20, 0x20);
+      return;
+    }
+
+    asm volatile("pusha");
+    asm volatile("pushf");
+
+    if (fpu_in_use()) {
+      fpu_save(&fpu_ctx);
+    }
+
+    uint8_t scancode = inb(KEYBOARD_DATA_PORT);
+
+    handle_special_keys(scancode);
+
+    if (mods.extended) {
+      handle_cursor_movement(scancode);
+      mods.extended = false;
+      goto cleanup;
+    }
+
+    if (scancode == 0x0E) {
+      if (buffer_index > 0) {
+        buffer_index--;
+        cprint('\b', VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      }
+      goto cleanup;
+    }
+
+    process_character(scancode);
+
+  cleanup:
+
+    if (buffer_index < BUFFER_SIZE - 1) {
+      buffer_overflow = false;
+    }
+
+    outb(0x20, 0x20);
+
+    if (fpu_in_use()) {
+      fpu_restore(&fpu_ctx);
+    }
+
+    asm volatile("popf");
+    asm volatile("popa");
+  }
+
+  void set_keyboard_layout(keyboard_layout layout) {
+    if (layout >= LAYOUT_COUNT) {
+      viprint("Invalid keyboard layout specified");
+      return;
+    }
+
+    current_layout = layout;
+    printf("Keyboard layout set to %s", layouts[layout].name);
+  }
+
+  bool check_stack_integrity() { return true; }
