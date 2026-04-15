@@ -1,8 +1,6 @@
 #ifndef KEY_MAPS_H
 #define KEY_MAPS_H
 
-#define MAX_SCANCODE 0x58
-
 const char *qwerty_lowercase_key_map[MAX_SCANCODE] = {
     "ERROR",    "ESC",      "1",         "2",        "3",          "4",
     "5",        "6",        "7",         "8",        "9",          "0",
@@ -13,7 +11,7 @@ const char *qwerty_lowercase_key_map[MAX_SCANCODE] = {
     "j",        "k",        "l",         ";",        "'",          "`",
     "LShift",   "\\",       "z",         "x",        "c",          "v",
     "b",        "n",        "m",         ",",        ".",          "/",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -30,7 +28,7 @@ const char *qwerty_uppercase_key_map[MAX_SCANCODE] = {
     "J",        "K",        "L",         ":",        "\"",         "~",
     "LShift",   "|",        "Z",         "X",        "C",          "V",
     "B",        "N",        "M",         "<",        ">",          "?",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -47,7 +45,7 @@ const char *azerty_lowercase_key_map[MAX_SCANCODE] = {
     "j",        "k",        "l",         "m",        "ù",          "`",
     "LShift",   "*",        "w",         "x",        "c",          "v",
     "b",        "n",        ",",         ";",        ":",          "!",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -64,7 +62,7 @@ const char *azerty_uppercase_key_map[MAX_SCANCODE] = {
     "J",        "K",        "L",         "M",        "%",          "~",
     "LShift",   "µ",        "W",         "X",        "C",          "V",
     "B",        "N",        "?",         ".",        "/",          "§",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -81,7 +79,7 @@ const char *dvorak_lowercase_key_map[MAX_SCANCODE] = {
     "h",        "t",        "n",         "s",        "-",          "`",
     "LShift",   "\\",       ";",         "q",        "j",          "k",
     "x",        "b",        "m",         "w",        "v",          "z",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -98,7 +96,7 @@ const char *dvorak_uppercase_key_map[MAX_SCANCODE] = {
     "H",        "T",        "N",         "S",        "_",          "~",
     "LShift",   "|",        ":",         "Q",        "J",          "K",
     "X",        "B",        "M",         "W",        "V",          "Z",
-    "RShift",   "Keypad *", "LAlt",      "Space",    "CapsLock",   "F1",
+    "RShift",   "Keypad *", "LAlt",      " ",        "CapsLock",   "F1",
     "F2",       "F3",       "F4",        "F5",       "F6",         "F7",
     "F8",       "F9",       "F10",       "NumLock",  "ScrollLock", "Keypad 7",
     "Keypad 8", "Keypad 9", "Keypad -",  "Keypad 4", "Keypad 5",   "Keypad 6",
@@ -115,7 +113,7 @@ const char *fallback_map[MAX_SCANCODE] = {
     "K",        "L",        ";",         "'",          "`",        "LShift",
     "\\",       "Z",        "X",         "C",          "V",        "B",
     "N",        "M",        ",",         ".",          "/",        "RShift",
-    "Keypad *", "LAlt",     "Space",     "CapsLock",   "F1",       "F2",
+    "Keypad *", "LAlt",     " ",         "CapsLock",   "F1",       "F2",
     "F3",       "F4",       "F5",        "F6",         "F7",       "F8",
     "F9",       "F10",      "NumLock",   "ScrollLock", "Keypad 7", "Keypad 8",
     "Keypad 9", "Keypad -", "Keypad 4",  "Keypad 5",   "Keypad 6", "Keypad +",

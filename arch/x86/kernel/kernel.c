@@ -199,7 +199,7 @@ void kernel(void) {
 
   has_loaded();
   viprint("Content load complete\n");
-  viprint("\nCobra\n\n");
+  // viprint("\nCobra\n\n");
 
   for (;;) {
     __asm__ volatile("hlt");

@@ -27,6 +27,7 @@
 #include "screen.h"
 #include "security.h"
 #include "seg_not_present.h"
+#include "serial.h"
 #include "simd_floating_point.h"
 #include "stack_seg_fault.h"
 #include "stdio.h"
@@ -59,6 +60,9 @@ struct idtr {
 struct entries idt[IDT_SIZE];
 struct idtr idtp __attribute__((aligned(16)));
 
+// External assembly stub for IRQ1 (keyboard)
+extern void irq1_stub(void);
+
 void set_idt_entry(int vector, uintptr_t handler_address, uint16_t selector,
                    uint8_t type_attr) {
   idt[vector].low = handler_address & 0xFFFF;
@@ -78,22 +82,10 @@ void asm_ints_off() {
   viprint("Interrupts disabled\n");
 }
 
-void exception_handler() {
-  uint32_t esp;
-  asm volatile("mov %%esp, %0" : "=r"(esp));
-  viprint("Probable uncaught exception\n");
-  viprint("ESP:");
-  hexprint(esp);
-
-  outb(0x20, 0x20);
-}
-
 void default_handler(int vector) {
   viprint("Unhandled Interrupt: ");
   hexprint(vector);
   viprint("\n");
-
-  exception_handler();
 
   if (vector == 0x27 || vector == 0x2F) {
     return;
@@ -156,8 +148,8 @@ void read_handler_for_vec0() {
 }
 
 void read_handler_for_vec33() {
-  viprint("Handler for int 0: ");
-  hexprint((uintptr_t)keyboard_handler);
+  viprint("Handler for int 33: ");
+  hexprint((uintptr_t)irq1_stub);
   viprint("\n");
 }
 
@@ -188,10 +180,13 @@ void cmp_base_lim() {
 void init_ints() {
   viprint("Setting IDT entries\n");
 
+  // Fill all vectors with a default handler that halts
   for (int i = 0; i < IDT_SIZE; i++) {
     set_idt_entry(i, (uintptr_t)default_handler, 0x08, INT_GATE);
   }
 
+  // Exception handlers (commented until you have proper assembly stubs)
+  /*
   set_idt_entry(0, (uintptr_t)divide_by_zero, 0x08, TRAP_GATE);
   set_idt_entry(1, (uintptr_t)debug, 0x08, TRAP_GATE);
   set_idt_entry(2, (uintptr_t)nmi, 0x08, INT_GATE);
@@ -217,14 +212,17 @@ void init_ints() {
   set_idt_entry(29, (uintptr_t)vmm_comms, 0x08, INT_GATE);
   set_idt_entry(30, (uintptr_t)security, 0x08, INT_GATE);
   set_idt_entry(32, (uintptr_t)pit_handler, 0x08, INT_GATE);
-  set_idt_entry(33, (uintptr_t)keyboard_handler, 0x08, INT_GATE | DPL0);
+  */
 
-  viprint("Remapping\n");
+  // IRQ1 (keyboard) – use the assembly stub
+  set_idt_entry(33, (uintptr_t)irq1_stub, 0x08, INT_GATE | DPL0);
+
+  viprint("Remapping PIC\n");
   remap();
 
   viprint("Loading IDT\n");
-
   load();
 
+  // Enable interrupts
   asm_ints_on();
 }

@@ -1,10 +1,8 @@
 #ifndef SCREEN_H
 #define SCREEN_H
 
-#include "stdint.h"
-
-#define SCREEN_WIDTH 80
-#define SCREEN_HEIGHT 25
+#include <stddef.h>
+#include <stdint.h>
 
 enum vga_color {
   VGA_COLOR_BLACK = 0,
@@ -25,15 +23,22 @@ enum vga_color {
   VGA_COLOR_WHITE = 15,
 };
 
+#define SCREEN_WIDTH 80
+#define SCREEN_HEIGHT 25
+
 void set_text_color(enum vga_color fg, enum vga_color bg);
 void init_screen(void);
 void set_cursor_offset(int offset);
 int get_offset(int col, int row);
 void cprint(char c);
+void cprint_color(char c, enum vga_color fg, enum vga_color bg); // NEW
+void vprint(const char *data, size_t size);
 void viprint(const char *data);
-void scroll();
-void clear_screen();
+void scroll(void);
+void clear_screen(void);
+void update_cursor(void);
 void hexprint(uint32_t value);
-void has_loaded();
+void has_loaded(void);
+void set_cursor_position(int x, int y); // NEW
 
-#endif // !SCREEN_H
+#endif

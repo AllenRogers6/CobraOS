@@ -148,6 +148,19 @@ void update_cursor() {
   outb(0x3D5, (pos >> 8) & 0xFF);
 }
 
+void cprint_color(char c, enum vga_color fg, enum vga_color bg) {
+  uint8_t old_colors = colors;
+  set_text_color(fg, bg);
+  cprint(c);
+  set_text_color(old_colors >> 4, old_colors & 0x0F); // restore
+}
+
+void set_cursor_position(int x, int y) {
+  cursor_col = x;
+  cursor_row = y;
+  set_cursor_offset(get_offset(x, y));
+}
+
 void hexprint(uint32_t value) {
   char hexString[11] = "0x00000000";
   for (int i = 9; i >= 2; i--) {
