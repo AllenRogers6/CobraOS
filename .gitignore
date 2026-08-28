@@ -5,3 +5,4 @@
 *.txt
 *.hex
 .log
+/.ccls-cache/  
