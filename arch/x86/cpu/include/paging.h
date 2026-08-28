@@ -1,6 +1,6 @@
 #ifndef PAGING_H
 #define PAGING_H
 
-void setup_paging();
+void paging_init(void);
 
-#endif // !DEBUG
+#endif

@@ -2,6 +2,7 @@
 #include "io.h"
 #include "key_maps.h"
 #include "ps2.h"
+#include "registers.h"
 #include "screen.h"
 #include "stdio.h"
 #include "string.h"
@@ -14,36 +15,36 @@
 #define VGA_COLOR_WHITE 15
 #define VGA_COLOR_BLACK 0
 
-#define BUFFER_SIZE 256
+#define KB_BUFFER_SIZE 256
 #define KEYBOARD_STATUS_PORT 0x64
 #define KEYBOARD_DATA_PORT 0x60
 
 extern uint32_t __stack_chk_guard;
 #define STACK_CANARY __stack_chk_guard
 
-// Modifier state structure (already defined in keyboard.h but we repeat for
-// clarity)
 typedef struct {
-  bool shift;
-  bool caps;
-  bool ctrl;
-  bool alt;
-  bool gui;
+  bool shift_left, shift_right;
+  bool ctrl_left, ctrl_right;
+  bool alt_left, alt_right;
+  bool gui_left, gui_right;
+  bool caps_lock, num_lock, scroll_lock;
   bool extended;
-} modifier_state;
+} keyboard_mods_t;
 
-// Global state
-static volatile modifier_state mods = {0};
+static volatile keyboard_mods_t mods;
 static keyboard_layout current_layout = QWERTY;
-static char keyboard_buffer[BUFFER_SIZE];
-static volatile int buffer_index = 0;
-static point cursor_pos = {0, 0};
-static volatile bool buffer_overflow = false;
 
-// FPU context (definition from keyboard.h)
+static volatile char key_buffer[KB_BUFFER_SIZE];
+static volatile unsigned int key_head = 0;
+static volatile unsigned int key_tail = 0;
+static volatile bool buffer_overflow = false;
+static volatile bool reboot_requested = false;
+static volatile bool repeat_event = false;
+static volatile bool key_repeat_enabled = true;
+static volatile uint8_t key_states[16];
+
 static fpu_context_t fpu_ctx __attribute__((aligned(16)));
 
-// External declarations (already in key_maps.h, but if not, declare them)
 extern const char *qwerty_lowercase_key_map[];
 extern const char *qwerty_uppercase_key_map[];
 extern const char *azerty_lowercase_key_map[];
@@ -62,25 +63,109 @@ static keymap layouts[LAYOUT_COUNT] = {
                 .lowercase = dvorak_lowercase_key_map,
                 .uppercase = dvorak_uppercase_key_map}};
 
-/* ---------- Forward declarations ---------- */
-static void handle_special_keys(uint8_t scancode);
+static void handle_special_keys(uint8_t scancode, bool extended);
 static void handle_cursor_movement(uint8_t scancode);
 static void process_character(uint8_t scancode);
-static void buffer_add_char(char c);
+static bool buffer_put(char c);
+static char buffer_get(void);
+static bool buffer_is_full(void);
 bool check_stack_integrity(void);
 bool fpu_in_use(void);
 void fpu_save(fpu_context_t *ctx);
 void fpu_restore(fpu_context_t *ctx);
 
-/* ---------- Initialisation ---------- */
+static inline bool shift_active(void) {
+  return mods.shift_left || mods.shift_right;
+}
+
+static inline bool ctrl_active(void) {
+  return mods.ctrl_left || mods.ctrl_right;
+}
+
+static inline bool alt_active(void) { return mods.alt_left || mods.alt_right; }
+
+static inline bool gui_active(void) { return mods.gui_left || mods.gui_right; }
+
+static bool key_is_down(uint8_t scancode) {
+  uint8_t idx = scancode >> 3;
+  uint8_t mask = (uint8_t)(1u << (scancode & 7));
+  return (key_states[idx] & mask) != 0;
+}
+
+static void key_set_down(uint8_t scancode) {
+  key_states[scancode >> 3] |= (uint8_t)(1u << (scancode & 7));
+}
+
+static void key_clear_down(uint8_t scancode) {
+  key_states[scancode >> 3] &= (uint8_t)~(1u << (scancode & 7));
+}
+
+static bool buffer_is_full(void) {
+  return ((key_head + 1) % KB_BUFFER_SIZE) == key_tail;
+}
+
+static bool buffer_put(char c) {
+  unsigned int next = (key_head + 1) % KB_BUFFER_SIZE;
+  if (next == key_tail) {
+    buffer_overflow = true;
+    return false;
+  }
+
+  key_buffer[key_head] = c;
+  key_head = next;
+  return true;
+}
+
+static char buffer_get(void) {
+  char c = key_buffer[key_tail];
+  key_tail = (key_tail + 1) % KB_BUFFER_SIZE;
+  return c;
+}
+
+bool keyboard_has_char(void) { return key_head != key_tail; }
+
+char keyboard_get_char(void) {
+  if (key_head == key_tail)
+    return '\0';
+
+  return buffer_get();
+}
+
+bool keyboard_consume_reboot_request(void) {
+  bool ret = reboot_requested;
+  reboot_requested = false;
+  return ret;
+}
+
+void keyboard_set_key_repeat(bool enabled) { key_repeat_enabled = enabled; }
+
+bool keyboard_get_key_repeat(void) { return key_repeat_enabled; }
+
 void init_keyboard(void) {
   ps2_init();
   set_keyboard_layout(QWERTY);
   outb(0x21, inb(0x21) & 0xFD);
+
+  key_head = key_tail = 0;
+  buffer_overflow = false;
+  reboot_requested = false;
+  repeat_event = false;
+  key_repeat_enabled = true;
+
+  mods.shift_left = mods.shift_right = false;
+  mods.ctrl_left = mods.ctrl_right = false;
+  mods.alt_left = mods.alt_right = false;
+  mods.gui_left = mods.gui_right = false;
+  mods.caps_lock = mods.num_lock = mods.scroll_lock = false;
+  mods.extended = false;
+
+  for (int i = 0; i < (int)(sizeof(key_states) / sizeof(key_states[0])); i++) {
+    key_states[i] = 0;
+  }
+
   printf("Keyboard initialized with %s layout\n", layouts[current_layout].name);
 }
 
-/* ---------- Layout management ---------- */
 void set_keyboard_layout(keyboard_layout layout) {
   if (layout >= LAYOUT_COUNT) {
     viprint("Invalid keyboard layout specified");
@@ -90,20 +175,17 @@ void set_keyboard_layout(keyboard_layout layout) {
   printf("Keyboard layout set to %s", layouts[layout].name);
 }
 
-/* ---------- Scancode translation ---------- */
 const char *get_char_from_scancode(uint8_t scancode) {
   if (scancode >= MAX_SCANCODE)
     return NULL;
 
-  // Capture modifier state atomically (simplified)
-  bool shift = mods.shift;
-  bool caps = mods.caps;
+  bool shift = shift_active();
+  bool caps = mods.caps_lock;
 
   const keymap *map = &layouts[current_layout];
   return (shift ^ caps) ? map->uppercase[scancode] : map->lowercase[scancode];
 }
 
-/* ---------- Stack checking (placeholder) ---------- */
 void check_stack(void) {
   uint32_t canary = 0xDEADBEEF;
   uint32_t *stack_canary = &canary;
@@ -114,27 +196,21 @@ void check_stack(void) {
   }
 }
 
-/* ---------- Main keyboard interrupt handler ---------- */
-void keyboard_handler(void) {
-  // Verify stack integrity
+void keyboard_handler(struct registers *r) {
+  (void)r;
   if (!check_stack_integrity()) {
     viprint("Stack corruption detected in keyboard handler!");
-    outb(0x20, 0x20);
     return;
   }
 
-  asm volatile("pusha");
-  asm volatile("pushf");
-
-  // Save FPU state if needed
-  /*if (fpu_in_use()) {
+  if (fpu_in_use()) {
     fpu_save(&fpu_ctx);
-  }*/
-
-  // Read scancode with timeout
-  int timeout = 1000;
-  while ((inb(KEYBOARD_STATUS_PORT) & 0x02) && --timeout) {
   }
+
+  int timeout = 1000;
+  while ((inb(KEYBOARD_STATUS_PORT) & 0x01) == 0 && --timeout) {
+  }
+
   if (timeout == 0) {
     viprint("Keyboard controller timeout\n");
     goto cleanup;
@@ -142,215 +218,203 @@ void keyboard_handler(void) {
 
   uint8_t scancode = inb(KEYBOARD_DATA_PORT);
 
-  // Handle extended prefix (E0)
   if (scancode == 0xE0) {
     mods.extended = true;
     goto cleanup;
   }
 
-  // Process modifiers
-  handle_special_keys(scancode);
-
-  // Handle extended keys (cursor movement)
-  if (mods.extended) {
-    handle_cursor_movement(scancode);
+  if (scancode == 0xE1) {
     mods.extended = false;
     goto cleanup;
   }
 
-  // Backspace handling
-  if (scancode == 0x0E) {
-    if (buffer_index > 0) {
-      buffer_index--;
-      cprint_color('\b', VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  bool extended = mods.extended;
+  bool is_release = (scancode & 0x80) != 0;
+  uint8_t base = scancode & 0x7F;
+
+  bool was_down = key_is_down(base);
+  repeat_event = !is_release && was_down;
+
+  if (!is_release) {
+    key_set_down(base);
+  } else {
+    key_clear_down(base);
+  }
+
+  handle_special_keys(scancode, extended);
+
+  if (extended) {
+    mods.extended = false;
+
+    if (is_release)
+      goto cleanup;
+
+    if (base == 0x1C) {
+      if (!repeat_event || key_repeat_enabled)
+        buffer_put('\n');
+      goto cleanup;
     }
+
+    if (base == 0x53 && ctrl_active() && alt_active() && !repeat_event) {
+      reboot_requested = true;
+      goto cleanup;
+    }
+
+    if (!repeat_event || key_repeat_enabled)
+      handle_cursor_movement(base);
+
     goto cleanup;
   }
 
-  // Normal key press (ignore key releases)
-  if (!(scancode & 0x80)) {
-    process_character(scancode);
+  if (base == 0x0E) {
+    if (!is_release && (!repeat_event || key_repeat_enabled))
+      buffer_put('\b');
+    goto cleanup;
   }
+
+  if (is_release)
+    goto cleanup;
+
+  process_character(scancode);
 
 cleanup:
-  // Clear buffer overflow flag if space available
-  if (buffer_index < BUFFER_SIZE - 1) {
+  if (!buffer_is_full())
     buffer_overflow = false;
-  }
 
-  // Send EOI
   outb(0x20, 0x20);
 
-  // Restore FPU state
   if (fpu_in_use()) {
     fpu_restore(&fpu_ctx);
   }
-
-  asm volatile("popf");
-  asm volatile("popa");
 }
 
-/* ---------- Helper: modifier key handling ---------- */
-static void handle_special_keys(uint8_t scancode) {
-  switch (scancode) {
-  // Left/Right Shift press
+static void handle_special_keys(uint8_t scancode, bool extended) {
+  uint8_t base = scancode & 0x7F;
+  bool make = !(scancode & 0x80);
+
+  switch (base) {
   case 0x2A:
+    mods.shift_left = make;
+    break;
   case 0x36:
-    mods.shift = true;
-    break;
-  // Left/Right Shift release
-  case 0xAA:
-  case 0xB6:
-    mods.shift = false;
+    mods.shift_right = make;
     break;
 
-  // Caps Lock toggles on press only
-  case 0x3A:
-    mods.caps = !mods.caps;
-    break;
-
-  // Left/Right Ctrl press
   case 0x1D:
-    mods.ctrl = true;
-    break;
-  // Left/Right Ctrl release
-  case 0x9D:
-    mods.ctrl = false;
+    if (extended)
+      mods.ctrl_right = make;
+    else
+      mods.ctrl_left = make;
     break;
 
-  // Left/Right Alt press
   case 0x38:
-    mods.alt = true;
-    break;
-  // Left/Right Alt release
-  case 0xB8:
-    mods.alt = false;
+    if (extended)
+      mods.alt_right = make;
+    else
+      mods.alt_left = make;
     break;
 
-  // Windows/GUI keys
   case 0x5B:
-  case 0x5C:
-    mods.gui = true;
+    mods.gui_left = make;
     break;
-  case 0xDB:
-  case 0xDC:
-    mods.gui = false;
+  case 0x5C:
+    mods.gui_right = make;
     break;
 
-  // Extended key prefix is handled separately
+  case 0x3A:
+    if (make && !repeat_event)
+      mods.caps_lock = !mods.caps_lock;
+    break;
+
+  case 0x45:
+    if (make && !repeat_event)
+      mods.num_lock = !mods.num_lock;
+    break;
+
+  case 0x46:
+    if (make && !repeat_event)
+      mods.scroll_lock = !mods.scroll_lock;
+    break;
+
   default:
     break;
   }
 }
 
-/* ---------- Helper: cursor movement (arrow keys, home, end, pgup, pgdn)
- * ---------- */
 static void handle_cursor_movement(uint8_t scancode) {
-  point local_cursor = cursor_pos;
+  const char *seq = NULL;
 
   switch (scancode) {
-  case 0x48: // Up arrow
-    local_cursor.y = (local_cursor.y > 0) ? local_cursor.y - 1 : 0;
+  case 0x48:
+    seq = "\x1B[A";
     break;
-  case 0x50: // Down arrow
-    local_cursor.y = (local_cursor.y < SCREEN_HEIGHT - 1) ? local_cursor.y + 1
-                                                          : SCREEN_HEIGHT - 1;
+  case 0x50:
+    seq = "\x1B[B";
     break;
-  case 0x4B: // Left arrow
-    local_cursor.x = (local_cursor.x > 0) ? local_cursor.x - 1 : 0;
+  case 0x4B:
+    seq = "\x1B[D";
     break;
-  case 0x4D: // Right arrow
-    local_cursor.x = (local_cursor.x < SCREEN_WIDTH - 1) ? local_cursor.x + 1
-                                                         : SCREEN_WIDTH - 1;
+  case 0x4D:
+    seq = "\x1B[C";
     break;
-  case 0x47: // Home
-    local_cursor.x = 0;
+  case 0x47:
+    seq = "\x1B[H";
     break;
-  case 0x4F: // End
-    local_cursor.x = SCREEN_WIDTH - 1;
+  case 0x4F:
+    seq = "\x1B[F";
     break;
-  case 0x49: // Page Up
-    local_cursor.y = (local_cursor.y > SCREEN_HEIGHT / 2)
-                         ? local_cursor.y - SCREEN_HEIGHT / 2
-                         : 0;
-    break;
-  case 0x51: // Page Down
-    local_cursor.y = (local_cursor.y < SCREEN_HEIGHT - SCREEN_HEIGHT / 2)
-                         ? local_cursor.y + SCREEN_HEIGHT / 2
-                         : SCREEN_HEIGHT - 1;
+  case 0x53:
+    seq = "\x1B[3~";
     break;
   default:
-    // Unknown extended scancode – ignore
     return;
   }
 
-  cursor_pos = local_cursor;
-  set_cursor_position(cursor_pos.x, cursor_pos.y);
+  for (const char *p = seq; *p; p++) {
+    if (!buffer_put(*p))
+      break;
+  }
 }
 
-/* ---------- Helper: normal character processing ---------- */
 static void process_character(uint8_t scancode) {
   const char *ch = get_char_from_scancode(scancode);
   if (!ch || !*ch)
     return;
 
-  // Handle Enter key (scancode 0x1C) – output newline
   if (scancode == 0x1C) {
-    buffer_add_char('\n');
-    cprint_color('\n', VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    if (!repeat_event || key_repeat_enabled)
+      buffer_put('\n');
     return;
   }
 
-  // Only process if the string is exactly one character long
-  // (This filters out "LShift", "ESC", "F1", etc.)
   if (ch[1] != '\0')
     return;
 
-  // Handle Ctrl+letter combinations
-  if (mods.ctrl && ch[0] >= '@' && ch[0] <= '_') {
-    char ctrl_char = ch[0] - '@';
-    buffer_add_char(ctrl_char);
-    cprint_color(ctrl_char, VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return;
+  char c = ch[0];
+
+  if (ctrl_active() && !alt_active()) {
+    if (c >= 'a' && c <= 'z')
+      c -= 0x20;
+
+    if (c >= '@' && c <= '_') {
+      if (!repeat_event || key_repeat_enabled)
+        buffer_put(c - '@');
+      return;
+    }
   }
 
-  // Normal printable character
-  buffer_add_char(ch[0]);
-  cprint_color(ch[0], VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-}
-/* ---------- Helper: add character to keyboard buffer ---------- */
-static void buffer_add_char(char c) {
-  if (buffer_index >= BUFFER_SIZE - 1) {
-    buffer_overflow = true;
-    return;
-  }
-  keyboard_buffer[buffer_index++] = c;
-  keyboard_buffer[buffer_index] = '\0';
+  if (!repeat_event || key_repeat_enabled)
+    buffer_put(c);
 }
 
-/* ---------- Dummy implementations for missing functions ---------- */
-// Replace these with actual implementations from your kernel.
-bool check_stack_integrity(void) {
-  // TODO: Implement real stack canary check
-  return true;
-}
+bool check_stack_integrity(void) { return true; }
 
-bool fpu_in_use(void) {
-  // TODO: Check CR0.TS or task state segment
-  return false;
-}
+bool fpu_in_use(void) { return false; }
 
-void fpu_save(fpu_context_t *ctx) {
-  // TODO: Save FPU state (e.g., fxsave)
-  (void)ctx;
-}
+void fpu_save(fpu_context_t *ctx) { (void)ctx; }
 
-void fpu_restore(fpu_context_t *ctx) {
-  // TODO: Restore FPU state (e.g., fxrstor)
-  (void)ctx;
-}
+void fpu_restore(fpu_context_t *ctx) { (void)ctx; }
 
-/* ---------- Debug function ---------- */
 void debug_kb_handler(void) {
   uint32_t esp;
   asm volatile("mov %%esp, %0" : "=r"(esp));
@@ -360,47 +424,18 @@ void debug_kb_handler(void) {
   check_stack();
 }
 
-/* ---------- Legacy function (kept for compatibility) ---------- */
-void letter_to_screen(uint8_t scancode) {
-  // This function is deprecated; use process_character instead.
-  char scancode_ascii[85] = {0};
-  switch (scancode) {
-  case 0x2A:
-  case 0x36:
-    mods.shift = true;
-    break;
-  case 0xAA:
-  case 0xB6:
-    mods.shift = false;
-    break;
-  case 0x3A:
-    mods.caps = !mods.caps;
-    break;
-  case 0x1D:
-    mods.ctrl = true;
-    break;
-  case 0x9D:
-    mods.ctrl = false;
-    break;
-  case 0x38:
-    mods.alt = true;
-    break;
-  case 0xB8:
-    mods.alt = false;
-    break;
-  default:
-    ascii_converter(scancode, scancode_ascii, sizeof(scancode_ascii));
-    viprint(scancode_ascii);
-    cprint('\n');
-    break;
-  }
-}
+// deprecated
+void letter_to_screen(uint8_t scancode) { (void)scancode; }
 
 void ascii_converter(uint8_t scancode, char str[], size_t size) {
+  if (size == 0)
+    return;
+
   const char *ch = get_char_from_scancode(scancode);
   if (ch && *ch) {
     str[0] = *ch;
-    str[1] = '\0';
+    if (size > 1)
+      str[1] = '\0';
   } else {
     str[0] = '\0';
   }

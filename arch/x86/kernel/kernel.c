@@ -2,23 +2,36 @@
 #include "apic.h"
 #include "checking_int.h"
 #include "cornucopia_pic.h"
+#include "cornucopia_serial.h"
 #include "gdt.h"
+#include "heap.h"
 #include "interrupts.h"
 #include "io.h"
 #include "keyboard.h"
 #include "ldt.h"
+#include "multiboot.h"
 #include "paging.h"
 #include "pic.h"
 #include "pit.h"
 #include "ps2.h"
+#include "ramfs.h"
 #include "screen.h"
 #include "serial.h"
+#include "shell.h"
 #include "stdbool.h"
 #include "stdio.h"
+#include "task.h"
 #include "tss.h"
+#include "vmm.h"
 #include <stdint.h>
 
 #define QUEUE_SIZE 128
+
+#define BUFFER_SIZE 256
+
+extern char keyboard_buffer[256];
+extern volatile int buffer_index;
+extern uint32_t *kernel_page_directory;
 
 /*function to setup gdt, tss, and ldt*/
 void setup_gdt_and_tss() {
@@ -180,28 +193,74 @@ void keyboard_listener() {
 }
 
 /*x86 (32-bit) kernel*/
-void kernel(void) {
-
+void kernel(uint32_t magic, uint32_t multiboot_info_ptr) {
   init_screen();
 
   has_loaded();
 
   viprint("Content load...\n");
-  viprint("Set patch 0.0.2\n");
+  viprint("Set patch v0.4\n");
+
+  viprint("Magic: ");
+  hexprint(magic);
+  viprint("\n");
+
+  if (magic != 0x2BADB002) {
+    viprint("Error: Invalid Multiboot magic!\n");
+    while (1)
+      asm("hlt");
+  }
+
+  viprint("Kernel running at virtual address: ");
+  hexprint((uint32_t)&kernel);
+  viprint("\n");
 
   setup_gdt_and_tss();
 
   init_ints();
 
+  pit_init(100);
+  irq_register_handler(0, pit_handler);
+  irq_register_handler(1, keyboard_handler);
+  asm_ints_on();
+
+  paging_init();
+
+  parse_multiboot_info(multiboot_info_ptr);
+
+  // vmm_init(kernel_page_directory);
+  heap_init();
+
   unmask_kb();
 
+  clear_mask(0);
+
+  has_loaded();
   set_keyboard_layout(QWERTY);
 
   has_loaded();
+  ramfs_init();
+  ramfs_set_cwd(ramfs_get_root());
+
+  has_loaded();
+
+  has_loaded();
+  tasking_init();
+
+  has_loaded();
   viprint("Content load complete\n");
-  // viprint("\nCobra\n\n");
+  viprint("\nCobra\n\n");
+
+  has_loaded();
+  shell_init();
 
   for (;;) {
-    __asm__ volatile("hlt");
+
+    asm volatile("sti; hlt; cli");
+
+    while (keyboard_has_char()) {
+      char c = keyboard_get_char();
+      shell_feed_char(c);
+    }
   }
 }

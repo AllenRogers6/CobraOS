@@ -1,6 +1,7 @@
 #include "screen.h"
 #include "io.h"
 #include "string.h"
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -27,7 +28,7 @@ void set_cursor_offset(int offset);
 int get_offset(int col, int row);
 void cprint(char c);
 void vprint(const char *data, size_t size);
-void viprint(const char *data);
+void viprint(const char *format, ...);
 void scroll(void);
 void clear_screen(void);
 void update_cursor(void);
@@ -113,7 +114,136 @@ void vprint(const char *data, size_t size) {
   }
 }
 
-void viprint(const char *data) { vprint(data, strlen(data)); }
+void viprint(const char *format, ...);
+
+static int utoa(unsigned int value, char *buf, int base) {
+  char temp[33]; // enough for 32-bit binary + null
+  int i = 0, j = 0;
+
+  if (value == 0) {
+    temp[i++] = '0';
+  } else {
+    while (value > 0) {
+      int digit = value % base;
+      temp[i++] = (digit < 10) ? (digit + '0') : (digit - 10 + 'a');
+      value /= base;
+    }
+  }
+
+  while (i > 0) {
+    buf[j++] = temp[--i];
+  }
+  buf[j] = '\0';
+  return j;
+}
+
+static int itoa(int value, char *buf) {
+  if (value < 0) {
+    buf[0] = '-';
+    utoa((unsigned int)(-value), buf + 1, 10);
+    return 1 + utoa((unsigned int)(-value), buf + 1, 10); // recompute length
+  } else {
+    return utoa((unsigned int)value, buf, 10);
+  }
+}
+
+void viprint(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+
+  for (const char *p = format; *p != '\0'; p++) {
+    if (*p != '%') {
+      cprint(*p);
+      continue;
+    }
+
+    p++; // move past '%'
+    if (*p == '\0')
+      break; // trailing '%'
+
+    switch (*p) {
+    case '%':
+      cprint('%');
+      break;
+    case 'c': {
+      char c = (char)va_arg(args, int);
+      cprint(c);
+      break;
+    }
+    case 's': {
+      char *str = va_arg(args, char *);
+      if (str == NULL)
+        str = "(null)";
+      while (*str) {
+        cprint(*str++);
+      }
+      break;
+    }
+    case 'd':
+    case 'i': {
+      int num = va_arg(args, int);
+      char buf[12]; // enough for -2147483648 + null
+      itoa(num, buf);
+      char *s = buf;
+      while (*s)
+        cprint(*s++);
+      break;
+    }
+    case 'u': {
+      unsigned int num = va_arg(args, unsigned int);
+      char buf[11]; // max 10 digits + null
+      utoa(num, buf, 10);
+      char *s = buf;
+      while (*s)
+        cprint(*s++);
+      break;
+    }
+    case 'x':
+    case 'X': {
+      unsigned int num = va_arg(args, unsigned int);
+      char buf[9]; // 8 hex digits + null
+      utoa(num, buf, 16);
+      if (*p == 'X') {
+        for (char *s = buf; *s; s++) {
+          if (*s >= 'a' && *s <= 'f')
+            *s = *s - 'a' + 'A';
+        }
+      }
+      char *s = buf;
+      while (*s)
+        cprint(*s++);
+      break;
+    }
+    case 'o': {
+      unsigned int num = va_arg(args, unsigned int);
+      char buf[12]; // max 11 octal digits + null
+      utoa(num, buf, 8);
+      char *s = buf;
+      while (*s)
+        cprint(*s++);
+      break;
+    }
+    case 'p': {
+      void *ptr = va_arg(args, void *);
+      cprint('0');
+      cprint('x');
+      unsigned int addr = (unsigned int)ptr;
+      char buf[9];
+      utoa(addr, buf, 16);
+      char *s = buf;
+      while (*s)
+        cprint(*s++);
+      break;
+    }
+    default:
+      cprint('%');
+      cprint(*p);
+      break;
+    }
+  }
+
+  va_end(args);
+}
 
 void scroll() {
   uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
@@ -126,6 +256,13 @@ void scroll() {
   }
   cursor_row = SCREEN_HEIGHT - 1;
   cursor_col = 0;
+}
+
+void clear_screen_row(int row) {
+  uint16_t *video_memory = (uint16_t *)VIDEO_MEMORY;
+  for (int col = 0; col < SCREEN_WIDTH; col++) {
+    video_memory[row * SCREEN_WIDTH + col] = vga_entry(' ', colors);
+  }
 }
 
 void clear_screen() {
@@ -152,7 +289,7 @@ void cprint_color(char c, enum vga_color fg, enum vga_color bg) {
   uint8_t old_colors = colors;
   set_text_color(fg, bg);
   cprint(c);
-  set_text_color(old_colors >> 4, old_colors & 0x0F); // restore
+  set_text_color(old_colors & 0x0F, old_colors >> 4); // restore
 }
 
 void set_cursor_position(int x, int y) {
@@ -178,3 +315,7 @@ void has_loaded() {
   set_text_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
   viprint(" ] ");
 }
+
+int get_cursor_row(void) { return cursor_row; }
+
+int get_cursor_col(void) { return cursor_col; }

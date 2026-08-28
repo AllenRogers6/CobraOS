@@ -2,10 +2,10 @@
 AS = as
 CC = gcc
 NASM = nasm
-CFLAGS = -I kernel/include -I drivers/screen/include -I drivers/keyboard/include \
-         -I ../../lib/include -I cpu/include -I cornucopia/include \
+CFLAGS = -I kernel/include -I drivers/screen/include -I drivers/keyboard/include -I drivers/cmos/include \
+         -I ../../lib/include -I cpu/include -I cornucopia/include -I fs/include -I snake/include \
          -ffreestanding -O0 -Wall -Wextra -nostartfiles -nostdlib -m32 -g \
-         -fno-omit-frame-pointer -mgeneral-regs-only -fno-stack-protector -fno-pie
+         -fno-omit-frame-pointer -mgeneral-regs-only -fno-stack-protector -fno-pie -g
 LINKFLAGS = -ffreestanding -nostdlib -no-pie -z max-page-size=0x1000
 
 ## directories (relative to arch/x86)
@@ -17,58 +17,50 @@ libDir = ../../lib
 srcDir = src
 buildDir = build
 isoDir = iso
+fsDir = fs
+snakeDir = snake
 
 ## ------------------------------------------------------------
-## EXPLICIT SOURCE LISTS (adjust if you have more files)
+## EXPLICIT SOURCE LISTS 
 ## ------------------------------------------------------------
 c_sources = \
-    $(cpuDir)/alignment_check.c \
     $(cpuDir)/apic.c \
-    $(cpuDir)/bound_range_exceeded.c \
-    $(cpuDir)/breakpoint.c \
     $(cpuDir)/checking_int.c \
-    $(cpuDir)/co_seg_overrun.c \
-    $(cpuDir)/control_protection.c \
-    $(cpuDir)/debug.c \
-    $(cpuDir)/dev_not_found.c \
-    $(cpuDir)/divide_by_zero.c \
-    $(cpuDir)/double_fault.c \
-    $(cpuDir)/floating_point_error.c \
     $(cpuDir)/gdt.c \
     $(cpuDir)/get_eip.c \
-    $(cpuDir)/gpf.c \
-    $(cpuDir)/hypervisor_injection.c \
     $(cpuDir)/interrupts.c \
-    $(cpuDir)/invalid_opcode.c \
-    $(cpuDir)/invalid_tss.c \
     $(cpuDir)/ldt.c \
-    $(cpuDir)/machine_check.c \
-    $(cpuDir)/nmi.c \
-    $(cpuDir)/overflow.c \
-    $(cpuDir)/page_fault.c \
     $(cpuDir)/paging.c \
     $(cpuDir)/pic.c \
     $(cpuDir)/pit.c \
     $(cpuDir)/ps2.c \
-    $(cpuDir)/security.c \
-    $(cpuDir)/seg_not_present.c \
     $(cpuDir)/serial.c \
-    $(cpuDir)/simd_floating_point.c \
-    $(cpuDir)/stack_seg_fault.c \
-    $(cpuDir)/triple_fault.c \
     $(cpuDir)/tss.c \
-    $(cpuDir)/virtualization.c \
-    $(cpuDir)/vmm_comms.c \
+    $(cpuDir)/vmm.c \
     $(driversDir)/screen/screen.c \
     $(driversDir)/keyboard/keyboard.c \
+    $(driversDir)/cmos/rtc.c \
     $(kernelDir)/kernel.c \
+    $(kernelDir)/task.c \
     $(kernelDir)/stack_protector.c \
+    $(kernelDir)/shell.c \
+    $(kernelDir)/multiboot.c \
+    $(kernelDir)/pmm.c \
+    $(kernelDir)/panic.c \
+    $(kernelDir)/klog.c \
+    $(kernelDir)/heap.c \
+    $(kernelDir)/spinlock.c \
+		$(fsDir)/ramfs.c \
     $(libDir)/io.c \
     $(libDir)/string.c \
+		$(snakeDir)/snake.c \
     $(libDir)/stdio.c
 
+
 asm_sources = \
-    $(cpuDir)/irq_stubs.asm
+    $(cpuDir)/irq_stubs.asm \
+    $(cpuDir)/exception_stubs.asm \
+    $(cpuDir)/task_switch.asm
 
 boot_src = $(bootDir)/bootloader.s
 boot_obj = $(buildDir)/bootloader.o
@@ -107,18 +99,24 @@ $(buildDir)/%.o: %.asm
 	@echo "Assembling $<"
 	$(NASM) -f elf32 $< -o $@
 
-## link
-$(osBin): $(boot_obj) $(OBJ)
-	@echo "Linking $@"
+$(buildDir)/kernel.elf: $(boot_obj) $(OBJ)
+	@echo "Linking ELF"
 	$(CC) -m32 -T $(linkerLd) $(LINKFLAGS) -o $@ $^
 
+## link
+$(osBin): $(boot_obj) $(OBJ)
+	@echo "Linking ELF"
+	$(CC) -m32 -T $(linkerLd) $(LINKFLAGS) -o build/kernel.elf $^
+	@echo "Creating flat binary"
+	objcopy -O binary build/kernel.elf $@
+
 ## create ISO
-$(isoFile): $(osBin)
+$(isoFile): $(buildDir)/kernel.elf
 	@echo "Creating ISO $@"
 	mkdir -p $(isoDir)/boot/grub
-	cp $(osBin) $(isoDir)/boot/kernel.bin
-	printf 'set timeout=5\nset default=0\nmenuentry "Cobra OS" {\n  multiboot /boot/kernel.bin\n  echo Thats one small step for man, one giant leap for mankind\n  boot\n}\n' > $(isoDir)/boot/grub/grub.cfg
-	grub-mkrescue -o $@ $(isoDir)
+	cp $(buildDir)/kernel.elf $(isoDir)/boot/kernel.elf
+	printf 'set timeout=5\nset default=0\nmenuentry "Cobra OS" {\n  multiboot /boot/kernel.elf\n  boot\n}\n' > $(isoDir)/boot/grub/grub.cfg
+	grub-mkrescue --output=$@ $(isoDir)
 
 ## clean
 clean:

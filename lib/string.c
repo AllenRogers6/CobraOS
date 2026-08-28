@@ -98,3 +98,27 @@ void *memset(void *dest, int ch, size_t count) {
 
   return dest;
 }
+
+int strcmp(const char *s1, const char *s2) {
+  while (*s1 && *s2 && *s1 == *s2) {
+    s1++;
+    s2++;
+  }
+  return *s1 - *s2;
+}
+
+char *strrchr(const char *s, int c) {
+  const char *last = NULL;
+
+  while (1) {
+    if (*s == (char)c) {
+      last = s;
+    }
+    if (*s == '\0') {
+      break;
+    }
+    s++;
+  }
+
+  return (char *)last;
+}

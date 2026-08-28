@@ -1,50 +1,29 @@
 #include "interrupts.h"
-#include "alignment_check.h"
-#include "apic.h"
-#include "bound_range_exceeded.h"
-#include "breakpoint.h"
-#include "checking_int.h"
-#include "co_seg_overrun.h"
-#include "control_protection.h"
-#include "debug.h"
-#include "dev_not_found.h"
-#include "divide_by_zero.h"
-#include "double_fault.h"
-#include "floating_point_error.h"
-#include "gpf.h"
-#include "hypervisor_injection.h"
-#include "invalid_opcode.h"
-#include "invalid_tss.h"
 #include "io.h"
-#include "keyboard.h"
-#include "machine_check.h"
-#include "nmi.h"
-#include "overflow.h"
-#include "page_fault.h"
 #include "pic.h"
-#include "pit.h"
 #include "registers.h"
 #include "screen.h"
-#include "security.h"
-#include "seg_not_present.h"
-#include "serial.h"
-#include "simd_floating_point.h"
-#include "stack_seg_fault.h"
 #include "stdio.h"
 #include "string.h"
-#include "triple_fault.h"
-#include "virtualization.h"
-#include "vmm_comms.h"
 #include <stdint.h>
 
 #define IDT_SIZE 256
 #define INT_GATE 0x8E
 #define TRAP_GATE 0x8F
-#define TASK_GATE 0x5
 #define DPL0 0x00
 #define DPL3 0x60
 
-struct entries {
+#define PIC1_CMD 0x20
+#define PIC2_CMD 0xA0
+#define PIC_EOI 0x20
+#define PIC_READ_ISR 0x0B
+
+#define IRQ_BASE 32
+#define IRQ_COUNT 16
+#define SYSCALL_VECTOR 0x80
+#define MAX_SYSCALLS 64
+
+struct idt_entry {
   uint16_t low;
   uint16_t selector;
   uint8_t reserved;
@@ -57,172 +36,267 @@ struct idtr {
   uint32_t base;
 } __attribute__((packed));
 
-struct entries idt[IDT_SIZE];
-struct idtr idtp __attribute__((aligned(16)));
+static struct idt_entry idt[IDT_SIZE];
+static struct idtr idtp __attribute__((aligned(16)));
 
-// External assembly stub for IRQ1 (keyboard)
-extern void irq1_stub(void);
+extern uintptr_t isr_stub_table[256];
 
-void set_idt_entry(int vector, uintptr_t handler_address, uint16_t selector,
-                   uint8_t type_attr) {
-  idt[vector].low = handler_address & 0xFFFF;
+static irq_handler_t irq_handlers[IRQ_COUNT];
+static syscall_handler_t syscall_table[MAX_SYSCALLS];
+
+static void set_idt_entry(int vector, uintptr_t handler, uint16_t selector,
+                          uint8_t type_attr) {
+  idt[vector].low = handler & 0xFFFF;
   idt[vector].selector = selector;
   idt[vector].reserved = 0;
   idt[vector].type_attr = type_attr;
-  idt[vector].high = (handler_address >> 16) & 0xFFFF;
+  idt[vector].high = (handler >> 16) & 0xFFFF;
 }
 
-void asm_ints_on() {
+void asm_ints_on(void) {
   asm volatile("sti");
   viprint("Interrupts enabled\n");
 }
 
-void asm_ints_off() {
+void asm_ints_off(void) {
   asm volatile("cli");
   viprint("Interrupts disabled\n");
 }
 
-void default_handler(int vector) {
-  viprint("Unhandled Interrupt: ");
-  hexprint(vector);
-  viprint("\n");
-
-  if (vector == 0x27 || vector == 0x2F) {
-    return;
-  }
-
-  while (1)
-    asm volatile("cli; hlt");
-}
-
-void print_idt_entry(uint8_t vector) {
-  uintptr_t *idt_base = NULL;
-  uintptr_t *idt_entry = (uintptr_t *)(idt_base + vector * 8);
-  uintptr_t low_addr = idt_entry[0] & 0xFFFF;
-  uintptr_t high_addr = (idt_entry[0] >> 16) & 0xFFFF;
-  uintptr_t flags = (idt_entry[1] >> 8) & 0xFF;
-  uintptr_t selector = idt_entry[1] & 0xFF;
-
-  viprint("IDT Entry for Vector: ");
-  hexprint(vector);
-  viprint("Address low: ");
-  hexprint(low_addr);
-  viprint("Address high: ");
-  hexprint(high_addr);
-  viprint("Flags: ");
-  hexprint(flags);
-  viprint("Selector: ");
-  hexprint(selector);
-}
-
-void load() {
+static void load_idt(void) {
   idtp.limit = sizeof(idt) - 1;
   idtp.base = (uintptr_t)&idt;
   asm volatile("lidt %0" : : "m"(idtp) : "memory");
-  has_loaded();
   viprint("Loaded IDT\n");
 }
 
-void verify_idt() {
-  struct idtr tmp;
-  __asm__ volatile("sidt %0" : "=m"(tmp));
+static uint16_t pic_read_isr(void) {
+  outb(PIC1_CMD, PIC_READ_ISR);
+  uint8_t pic1 = inb(PIC1_CMD);
 
-  viprint("Stored IDT Base: ");
-  hexprint(tmp.base);
-  viprint("Expected IDT Base: ");
-  hexprint(idtp.base);
+  outb(PIC2_CMD, PIC_READ_ISR);
+  uint8_t pic2 = inb(PIC2_CMD);
 
-  if (tmp.base == idtp.base && tmp.limit == idtp.limit) {
-    viprint("IDT loaded correctly\n");
+  return (pic2 << 8) | pic1;
+}
+
+static void pic_send_eoi(uint8_t irq) {
+  if (irq >= 8)
+    outb(PIC2_CMD, PIC_EOI);
+  outb(PIC1_CMD, PIC_EOI);
+}
+
+static const char *exception_names[] = {"Divide by zero",
+                                        "Debug",
+                                        "NMI",
+                                        "Breakpoint",
+                                        "Overflow",
+                                        "Bound range exceeded",
+                                        "Invalid opcode",
+                                        "Device not available",
+                                        "Double fault",
+                                        "Coprocessor segment overrun",
+                                        "Invalid TSS",
+                                        "Segment not present",
+                                        "Stack-segment fault",
+                                        "General protection fault",
+                                        "Page fault",
+                                        "Reserved",
+                                        "x87 FPU error",
+                                        "Alignment check",
+                                        "Machine check",
+                                        "SIMD FPU exception",
+                                        "Virtualization exception",
+                                        "Control protection exception",
+                                        "Reserved",
+                                        "Reserved",
+                                        "Reserved",
+                                        "Reserved",
+                                        "Reserved",
+                                        "Reserved",
+                                        "Hypervisor injection exception",
+                                        "VMM communication exception",
+                                        "Security exception"};
+
+static void print_regs(struct registers *r) {
+  viprint("EAX=");
+  hexprint(r->eax);
+  viprint(" EBX=");
+  hexprint(r->ebx);
+  viprint(" ECX=");
+  hexprint(r->ecx);
+  viprint(" EDX=");
+  hexprint(r->edx);
+
+  viprint("\nESI=");
+  hexprint(r->esi);
+  viprint(" EDI=");
+  hexprint(r->edi);
+  viprint(" EBP=");
+  hexprint(r->ebp);
+  viprint(" ESP=");
+  hexprint(r->esp);
+
+  viprint("\nEIP=");
+  hexprint(r->eip);
+  viprint(" CS=");
+  hexprint(r->cs);
+  viprint(" EFLAGS=");
+  hexprint(r->eflags);
+  viprint(" USERESP=");
+  hexprint(r->useresp);
+  viprint(" SS=");
+  hexprint(r->ss);
+  viprint("\n");
+}
+
+void exception_handler(struct registers *r) {
+  uint32_t vector = r->int_no;
+
+  if (vector < 31)
+    viprint(exception_names[vector]);
+  else
+    viprint("Unknown exception");
+
+  viprint(" Exception ");
+  hexprint(vector);
+  viprint(" err=");
+  hexprint(r->err_code);
+  viprint("\n");
+
+  print_regs(r);
+
+  if (vector == 14) { /* #PF */
+    uint32_t cr2;
+    asm volatile("mov %%cr2, %0" : "=r"(cr2));
+    viprint("CR2=");
+    hexprint(cr2);
+    viprint("\n");
+  }
+
+  viprint("Halting.\n");
+  asm volatile("cli; hlt");
+}
+
+void irq_dispatch(struct registers *r) {
+  uint8_t irq = r->int_no - IRQ_BASE;
+
+  if (irq >= IRQ_COUNT) {
+    viprint("Invalid IRQ vector\n");
+    return;
+  }
+
+  if (irq == 7 || irq == 15) {
+    uint16_t isr = pic_read_isr();
+    if (!(isr & (1 << irq))) {
+      /*
+       * Spurious slave IRQ15 requires EOI to master,
+       * but not to slave.
+       */
+      if (irq == 15)
+        outb(PIC1_CMD, PIC_EOI);
+      return;
+    }
+  }
+
+  if (irq_handlers[irq]) {
+    irq_handlers[irq](r);
   } else {
-    viprint("IDT loading failed\n");
-    while (1)
-      asm volatile("hlt");
+    viprint("Unhandled IRQ ");
+    hexprint(irq);
+    viprint("\n");
+  }
+
+  pic_send_eoi(irq);
+}
+
+static uint32_t syscall_dispatch(struct registers *r) {
+  uint32_t num = r->eax;
+
+  if (num >= MAX_SYSCALLS || !syscall_table[num])
+    return 0xFFFFFFFF; /* -ENOSYS */
+
+  return syscall_table[num](r->ebx, r->ecx, r->edx, r->esi);
+}
+
+void interrupt_dispatch(struct registers *r) {
+
+  uint32_t vector = r->int_no;
+
+  if (vector < 32) {
+    exception_handler(r);
+  } else if (vector >= IRQ_BASE && vector < IRQ_BASE + IRQ_COUNT) {
+    irq_dispatch(r);
+  } else if (vector == SYSCALL_VECTOR) {
+    r->eax = syscall_dispatch(r);
+  } else {
+    viprint("Unhandled interrupt: ");
+    hexprint(vector);
+    viprint("\n");
+    asm volatile("cli; hlt");
   }
 }
 
-void read_handler_for_vec0() {
-  viprint("Handler for int 0: ");
-  hexprint((uintptr_t)divide_by_zero);
-  viprint("\n");
+int irq_register_handler(uint8_t irq, irq_handler_t handler) {
+  if (irq >= IRQ_COUNT || !handler)
+    return -1;
+  if (irq_handlers[irq])
+    return -1; /* already occupied */
+
+  irq_handlers[irq] = handler;
+  return 0;
 }
 
-void read_handler_for_vec33() {
-  viprint("Handler for int 33: ");
-  hexprint((uintptr_t)irq1_stub);
-  viprint("\n");
+void irq_unregister_handler(uint8_t irq) {
+  if (irq < IRQ_COUNT)
+    irq_handlers[irq] = (irq_handler_t)0;
 }
 
-void read_esp() {
-  uint32_t esp;
-  asm volatile("mov %%esp, %0" : "=r"(esp));
-  viprint("Stack Pointer: ");
-  hexprint(esp);
-  viprint("\n");
+int syscall_register(uint8_t num, syscall_handler_t handler) {
+  if (num >= MAX_SYSCALLS || !handler)
+    return -1;
+  if (syscall_table[num])
+    return -1;
+
+  syscall_table[num] = handler;
+  return 0;
 }
 
-void cmp_base_lim() {
-  struct idtr tmp;
-  asm volatile("sidt %0" : "=m"(tmp));
-
-  viprint("IDT Base: ");
-  hexprint(idtp.base);
-  viprint("\nIDT Limit: ");
-  hexprint(idtp.limit);
-  viprint("\n");
-
-  viprint("Stored IDT Base: ");
-  hexprint(tmp.base);
-  viprint("Stored IDT Limit: ");
-  hexprint(tmp.limit);
-}
-
-void init_ints() {
+void init_ints(void) {
   viprint("Setting IDT entries\n");
 
-  // Fill all vectors with a default handler that halts
   for (int i = 0; i < IDT_SIZE; i++) {
-    set_idt_entry(i, (uintptr_t)default_handler, 0x08, INT_GATE);
+    uint8_t attr = INT_GATE;
+
+    if (i == 3)
+      attr = TRAP_GATE | DPL3;
+
+    if (i == SYSCALL_VECTOR)
+      attr = INT_GATE | DPL3;
+
+    set_idt_entry(i, isr_stub_table[i], 0x08, attr);
   }
-
-  // Exception handlers (commented until you have proper assembly stubs)
-  /*
-  set_idt_entry(0, (uintptr_t)divide_by_zero, 0x08, TRAP_GATE);
-  set_idt_entry(1, (uintptr_t)debug, 0x08, TRAP_GATE);
-  set_idt_entry(2, (uintptr_t)nmi, 0x08, INT_GATE);
-  set_idt_entry(3, (uintptr_t)breakpoint, 0x08, TRAP_GATE | DPL3);
-  set_idt_entry(4, (uintptr_t)overflow, 0x08, TRAP_GATE | DPL3);
-  set_idt_entry(5, (uintptr_t)bound_range_exceeded, 0x08, TRAP_GATE);
-  set_idt_entry(6, (uintptr_t)invalid_opcode, 0x08, TRAP_GATE);
-  set_idt_entry(7, (uintptr_t)dev_not_found, 0x08, TRAP_GATE);
-  set_idt_entry(8, (uintptr_t)double_fault_exception, 0x08, INT_GATE);
-  set_idt_entry(9, (uintptr_t)co_seg_overrun, 0x08, INT_GATE);
-  set_idt_entry(10, (uintptr_t)invalid_tss, 0x08, INT_GATE);
-  set_idt_entry(11, (uintptr_t)seg_not_present, 0x08, INT_GATE);
-  set_idt_entry(12, (uintptr_t)stack_seg_fault, 0x08, INT_GATE);
-  set_idt_entry(13, (uintptr_t)gpf, 0x08, INT_GATE);
-  set_idt_entry(14, (uintptr_t)page_fault_exception, 0x08, INT_GATE);
-  set_idt_entry(16, (uintptr_t)floating_point_error, 0x08, INT_GATE);
-  set_idt_entry(17, (uintptr_t)alignment_check, 0x08, INT_GATE);
-  set_idt_entry(19, (uintptr_t)simd_floating_point, 0x08, INT_GATE);
-  set_idt_entry(18, (uintptr_t)machine_check, 0x08, INT_GATE);
-  set_idt_entry(20, (uintptr_t)virtualization, 0x08, INT_GATE);
-  set_idt_entry(21, (uintptr_t)control_protection, 0x08, INT_GATE);
-  set_idt_entry(28, (uintptr_t)hypervisor_injection, 0x08, INT_GATE);
-  set_idt_entry(29, (uintptr_t)vmm_comms, 0x08, INT_GATE);
-  set_idt_entry(30, (uintptr_t)security, 0x08, INT_GATE);
-  set_idt_entry(32, (uintptr_t)pit_handler, 0x08, INT_GATE);
-  */
-
-  // IRQ1 (keyboard) – use the assembly stub
-  set_idt_entry(33, (uintptr_t)irq1_stub, 0x08, INT_GATE | DPL0);
 
   viprint("Remapping PIC\n");
   remap();
 
   viprint("Loading IDT\n");
-  load();
+  load_idt();
+}
 
-  // Enable interrupts
-  asm_ints_on();
+void verify_idt(void) {
+  struct idtr tmp;
+  asm volatile("sidt %0" : "=m"(tmp));
+
+  if (tmp.base == idtp.base && tmp.limit == idtp.limit)
+    viprint("IDT OK\n");
+  else
+    viprint("IDT mismatch!\n");
+}
+
+void read_esp(void) {
+  uint32_t esp;
+  asm volatile("mov %%esp, %0" : "=r"(esp));
+  viprint("ESP: ");
+  hexprint(esp);
 }

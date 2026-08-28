@@ -25,20 +25,24 @@ enum vga_color {
 
 #define SCREEN_WIDTH 80
 #define SCREEN_HEIGHT 25
+#define VIDEO_MEMORY 0xB8000
 
 void set_text_color(enum vga_color fg, enum vga_color bg);
 void init_screen(void);
 void set_cursor_offset(int offset);
 int get_offset(int col, int row);
 void cprint(char c);
-void cprint_color(char c, enum vga_color fg, enum vga_color bg); // NEW
+void cprint_color(char c, enum vga_color fg, enum vga_color bg);
 void vprint(const char *data, size_t size);
-void viprint(const char *data);
+void viprint(const char *format, ...);
 void scroll(void);
 void clear_screen(void);
 void update_cursor(void);
 void hexprint(uint32_t value);
 void has_loaded(void);
-void set_cursor_position(int x, int y); // NEW
+void set_cursor_position(int x, int y);
+int get_cursor_row(void);
+int get_cursor_col(void);
+void clear_screen_row(int row);
 
 #endif
