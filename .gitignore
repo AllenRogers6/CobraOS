@@ -4,5 +4,6 @@
 *.cfg
 *.txt
 *.hex
-.log
+*.log
+*.elf
 /.ccls-cache/  

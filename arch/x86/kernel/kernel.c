@@ -1,4 +1,3 @@
-#include "alignment_check.h"
 #include "apic.h"
 #include "checking_int.h"
 #include "cornucopia_pic.h"
