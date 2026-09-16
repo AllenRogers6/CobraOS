@@ -19,7 +19,6 @@
 #include "shell.h"
 #include "stdbool.h"
 #include "stdio.h"
-#include "task.h"
 #include "tss.h"
 #include "vmm.h"
 #include <stdint.h>
@@ -227,7 +226,6 @@ void kernel(uint32_t magic, uint32_t multiboot_info_ptr) {
 
   parse_multiboot_info(multiboot_info_ptr);
 
-  // vmm_init(kernel_page_directory);
   heap_init();
 
   unmask_kb();
@@ -244,7 +242,6 @@ void kernel(uint32_t magic, uint32_t multiboot_info_ptr) {
   has_loaded();
 
   has_loaded();
-  tasking_init();
 
   has_loaded();
   viprint("Content load complete\n");
