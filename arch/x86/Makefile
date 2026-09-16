@@ -1,3 +1,7 @@
+include config.mk
+
+VERSION ?= $(shell git -C ../.. describe --tags --dirty 2>/dev/null || echo 0.0.0-unknown)
+
 ## tools
 AS = as
 CC = gcc
@@ -7,6 +11,7 @@ CFLAGS = -I kernel/include -I drivers/screen/include -I drivers/keyboard/include
          -ffreestanding -O0 -Wall -Wextra -nostartfiles -nostdlib -m32 -g \
          -fno-omit-frame-pointer -mgeneral-regs-only -fno-stack-protector -fno-pie -g
 LINKFLAGS = -ffreestanding -nostdlib -no-pie -z max-page-size=0x1000
+OBJCOPY ?= objcopy
 
 ## directories (relative to arch/x86)
 bootDir = boot
@@ -20,9 +25,6 @@ isoDir = iso
 fsDir = fs
 snakeDir = snake
 
-## ------------------------------------------------------------
-## EXPLICIT SOURCE LISTS 
-## ------------------------------------------------------------
 c_sources = \
     $(cpuDir)/apic.c \
     $(cpuDir)/checking_int.c \
@@ -75,11 +77,11 @@ OBJ = $(c_objects) $(asm_objects)
 
 ## final outputs
 osBin = $(buildDir)/cobraOS.bin
-isoFile = cobra-x86-0.0.2.iso
+isoFile = cobra-x86-$(VERSION).iso
 linkerLd = $(srcDir)/linker.ld
 
 ## target
-all: $(isoFile)
+all: $(isoFile) $(osBin)
 
 ## create build dir
 $(shell mkdir -p $(buildDir) $(isoDir))
@@ -106,9 +108,7 @@ $(buildDir)/kernel.elf: $(boot_obj) $(OBJ)
 	$(CC) -m32 -T $(linkerLd) $(LINKFLAGS) -o $@ $^
 
 ## link
-$(osBin): $(boot_obj) $(OBJ)
-	@echo "Linking ELF"
-	$(CC) -m32 -T $(linkerLd) $(LINKFLAGS) -o build/kernel.elf $^
+$(osBin): $(buildDir)/kernel.elf
 	@echo "Creating flat binary"
 	objcopy -O binary build/kernel.elf $@
 
