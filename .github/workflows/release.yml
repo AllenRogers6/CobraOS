@@ -1,0 +1,180 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Publish CobraOS Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install toolchain and dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            build-essential \
+            gcc-multilib \
+            nasm \
+            xorriso \
+            grub-pc-bin \
+            grub-common \
+            mtools \
+            qemu-system-x86 \
+            qemu-utils \
+            file \
+            binutils
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version | head -1
+          nasm -v
+          grub-mkrescue --version | head -1
+          qemu-system-i386 --version | head -1
+
+      - name: Build ISO
+        run: |
+          make clean
+          make
+
+      - name: Verify artifacts
+        run: |
+          test -f arch/x86/build/kernel.elf
+          test -f arch/x86/build/cobraOS.bin
+
+          ISO=$(find arch/x86 -maxdepth 1 \
+            -name 'cobra-x86-*.iso' \
+            -print -quit)
+
+          if [ -z "$ISO" ]; then
+            echo "::error::CobraOS ISO was not produced"
+            exit 1
+          fi
+
+          echo "ISO=$ISO" >> "$GITHUB_ENV"
+
+          ls -lh \
+            arch/x86/build/kernel.elf \
+            arch/x86/build/cobraOS.bin \
+            "$ISO"
+
+          file \
+            arch/x86/build/kernel.elf \
+            arch/x86/build/cobraOS.bin \
+            "$ISO"
+
+      - name: Verify Multiboot header
+        run: |
+          if grub-file --is-x86-multiboot \
+              arch/x86/build/kernel.elf; then
+            echo "Multiboot header: OK"
+          else
+            echo "::error::kernel.elf is not Multiboot compliant"
+            exit 1
+          fi
+
+      - name: Boot and test CobraOS
+        run: |
+          set +e
+
+          timeout 30s \
+            qemu-system-i386 \
+              -cdrom "$ISO" \
+              -m 128M \
+              -serial stdio \
+              -no-reboot \
+              -no-shutdown \
+              -display none \
+              > qemu-serial.log 2>&1
+
+          QEMU_EXIT=$?
+
+          set -e
+
+          echo "QEMU exit code: $QEMU_EXIT"
+          echo
+          echo "CobraOS serial output"
+          cat qemu-serial.log
+
+          if grep -Eqi \
+            "Triple fault|cpu_reset|check_exception|kernel panic|panic:" \
+            qemu-serial.log; then
+            echo "::error::CobraOS crashed during boot"
+            exit 1
+          fi
+
+          if ! grep -q "CI_BOOT_OK" qemu-serial.log; then
+            echo "::error::CobraOS did not reach CI_BOOT_OK"
+            exit 1
+          fi
+
+          echo "CobraOS boot test: PASS"
+
+      - name: Prepare release assets
+        id: assets
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          cp "$ISO" \
+            "cobra-x86-${VERSION}.iso"
+
+          cp arch/x86/build/kernel.elf \
+            "cobra-x86-${VERSION}.elf"
+
+          cp arch/x86/build/cobraOS.bin \
+            "cobra-x86-${VERSION}.bin"
+
+          sha256sum \
+            "cobra-x86-${VERSION}.iso" \
+            "cobra-x86-${VERSION}.elf" \
+            "cobra-x86-${VERSION}.bin" \
+            > SHA256SUMS
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          echo "===== Release assets ====="
+          ls -lh \
+            "cobra-x86-${VERSION}.iso" \
+            "cobra-x86-${VERSION}.elf" \
+            "cobra-x86-${VERSION}.bin" \
+            SHA256SUMS
+
+          echo
+          cat SHA256SUMS
+
+      - name: Upload QEMU log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobra-release-qemu-log
+          path: qemu-serial.log
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Cobra OS ${{ steps.assets.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: >-
+            ${{ contains(github.ref_name, '-rc') ||
+                contains(github.ref_name, '-beta') ||
+                contains(github.ref_name, '-alpha') }}
+          files: |
+            cobra-x86-${{ steps.assets.outputs.version }}.iso
+            cobra-x86-${{ steps.assets.outputs.version }}.elf
+            cobra-x86-${{ steps.assets.outputs.version }}.bin
+            SHA256SUMS
