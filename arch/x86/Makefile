@@ -36,6 +36,8 @@ c_sources = \
     $(cpuDir)/ps2.c \
     $(cpuDir)/serial.c \
     $(cpuDir)/tss.c \
+		$(cpuDir)/timer.c \
+		$(cpuDir)/shutdown.c \
     $(cpuDir)/vmm.c \
     $(driversDir)/screen/screen.c \
     $(driversDir)/keyboard/keyboard.c \

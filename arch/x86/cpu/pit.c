@@ -3,6 +3,7 @@
 #include "registers.h"
 #include "screen.h"
 #include "task.h"
+#include "timer.h"
 #include <stdint.h>
 
 volatile uint32_t tick_count = 0;
@@ -58,6 +59,7 @@ void pit_init(uint32_t frequency) {
 void pit_handler(struct registers *r) {
   (void)r;
   tick_count++;
+  timer_tick();
   /* EOI is sent by the dispatcher after this returns. */
 }
 
@@ -118,3 +120,4 @@ void sleep(uint32_t milliseconds) {
 }
 
 uint32_t pit_get_tick_count(void) { return tick_count; }
+uint32_t pit_get_hz(void) { return pit_hz; }

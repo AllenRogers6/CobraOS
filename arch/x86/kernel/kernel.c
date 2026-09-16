@@ -17,6 +17,7 @@
 #include "screen.h"
 #include "serial.h"
 #include "shell.h"
+#include "shutdown.h"
 #include "stdbool.h"
 #include "stdio.h"
 #include "tss.h"
@@ -221,6 +222,8 @@ void kernel(uint32_t magic, uint32_t multiboot_info_ptr) {
   irq_register_handler(0, pit_handler);
   irq_register_handler(1, keyboard_handler);
   asm_ints_on();
+
+  schedule_default_shutdown();
 
   paging_init();
 

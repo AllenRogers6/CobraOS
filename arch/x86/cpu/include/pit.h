@@ -18,4 +18,6 @@ void pit_calibrate_with_rtc(uint32_t desired_hz);
 
 uint32_t pit_get_tick_count(void);
 
+uint32_t pit_get_hz(void);
+
 #endif /* PIT_H */

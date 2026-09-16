@@ -7,6 +7,7 @@
 #include "ramfs.h"
 #include "rtc.h"
 #include "screen.h"
+#include "shutdown.h"
 #include "snake.h"
 #include "stdio.h"
 #include "string.h"
@@ -31,6 +32,8 @@ static int cmd_len = 0;
 static char history[HISTORY_SIZE][MAX_CMD_LEN];
 static int history_count = 0;
 static int history_index = -1;
+
+static uint32_t sd_default_secs = 10 * 60;
 
 typedef enum { ESC_NONE, ESC_START, ESC_BRACKET } esc_state_t;
 static esc_state_t esc_state = ESC_NONE;
@@ -77,6 +80,7 @@ static void cmd_sn(const char *args);
 static void cmd_touch(const char *args);
 static void cmd_date(void);
 static void cmd_time(void);
+static void cmd_timer(const char *args);
 
 static vfs_node_t *shell_cwd = NULL;
 
@@ -124,6 +128,20 @@ static inline uint32_t read_eflags(void) {
   uint32_t eflags;
   asm volatile("pushfl; pop %0" : "=r"(eflags));
   return eflags;
+}
+
+static int parse_u32(const char *s, uint32_t *out) {
+  if (!s || !*s)
+    return -1;
+  uint32_t v = 0;
+  while (*s) {
+    if (*s < '0' || *s > '9')
+      return -1;
+    v = v * 10 + (uint32_t)(*s - '0');
+    s++;
+  }
+  *out = v;
+  return 0;
 }
 
 #define IF_FLAG (1 << 9)
@@ -447,6 +465,8 @@ static void shell_process_line(const char *line) {
     cmd_date();
   else if (strcmp(cmd, "time") == 0)
     cmd_time();
+  else if (strcmp(cmd, "timer") == 0)
+    cmd_timer(args);
 
   else {
     viprint("Unknown command: '");
@@ -471,6 +491,7 @@ static void cmd_help(void) {
   viprint("  echo ...  - Print arguments to screen\n");
   viprint("  ticks     - Show raw PIT tick count\n");
   viprint("  uptime    - Show uptime in seconds\n");
+  viprint("  timer ... - Schedule a shutdown (see 'timer status')\n");
   viprint("  tasks     - List all tasks and their states\n");
   viprint("  shutdown  - Halt the CPU\n");
   viprint("  reboot    - Reset via keyboard controller\n");
@@ -965,4 +986,139 @@ static void cmd_time(void) {
     viprint("0");
   print_uint(dt.second);
   viprint("\n");
+}
+
+static void cmd_timer(const char *args) {
+  char buf[256];
+  char *argv[16];
+  int argc = 0;
+
+  if (!args)
+    args = "";
+  size_t n = strlen(args);
+  if (n >= sizeof(buf))
+    n = sizeof(buf) - 1;
+  memcpy(buf, args, n);
+  buf[n] = '\0';
+
+  char *p = buf;
+  while (*p && argc < 16) {
+    while (*p == ' ' || *p == '\t')
+      p++;
+    if (!*p)
+      break;
+    argv[argc++] = p;
+    while (*p && *p != ' ' && *p != '\t')
+      p++;
+    if (*p)
+      *p++ = '\0';
+  }
+
+  if (argc == 0) {
+    schedule_shutdown(SHUTDOWN_POWEROFF, sd_default_secs * 1000,
+                      "default shutdown");
+    viprint("Shutdown scheduled in ");
+    print_uint(sd_default_secs / 60);
+    viprint(" min ");
+    print_uint(sd_default_secs % 60);
+    viprint("s. Use 'timer cancel' to abort.\n");
+    return;
+  }
+
+  if (strcmp(argv[0], "cancel") == 0) {
+    if (!shutdown_is_pending()) {
+      viprint("No shutdown pending.\n");
+      return;
+    }
+    cancel_shutdown();
+    viprint("Shutdown cancelled.\n");
+    return;
+  }
+
+  if (strcmp(argv[0], "status") == 0) {
+    if (!shutdown_is_pending()) {
+      viprint("No shutdown scheduled.\n");
+    } else {
+      viprint("Shutdown pending, ");
+      print_uint(shutdown_remaining_ms() / 1000);
+      viprint(" seconds remaining.\n");
+    }
+    return;
+  }
+
+  if (strcmp(argv[0], "default") == 0) {
+    if (argc < 2) {
+      viprint("Default shutdown: ");
+      print_uint(sd_default_secs);
+      viprint(" seconds.\n");
+      return;
+    }
+    uint32_t secs;
+    if (parse_u32(argv[1], &secs) < 0 || secs == 0) {
+      viprint("timer: bad default value.\n");
+      return;
+    }
+    sd_default_secs = secs;
+    viprint("Default shutdown set to ");
+    print_uint(secs);
+    viprint(" seconds.\n");
+    return;
+  }
+
+  if (strcmp(argv[0], "now") == 0) {
+    enum shutdown_mode mode = SHUTDOWN_POWEROFF;
+    if (argc >= 2 && strcmp(argv[1], "reboot") == 0)
+      mode = SHUTDOWN_REBOOT;
+    else if (argc >= 2 && strcmp(argv[1], "halt") == 0)
+      mode = SHUTDOWN_HALT;
+
+    schedule_shutdown(mode, 0, "immediate shutdown");
+    return;
+  }
+
+  uint32_t secs;
+  if (parse_u32(argv[0], &secs) < 0) {
+    viprint("timer: bad argument '");
+    viprint(argv[0]);
+    viprint("'\n");
+    viprint("usage: timer [<secs>] [reboot|halt] [message...]\n");
+    viprint("       timer cancel | status | now [reboot|halt]\n");
+    viprint("       timer default [secs]\n");
+    return;
+  }
+
+  enum shutdown_mode mode = SHUTDOWN_POWEROFF;
+  int msg_start = 1;
+
+  if (argc >= 2 && strcmp(argv[1], "reboot") == 0) {
+    mode = SHUTDOWN_REBOOT;
+    msg_start = 2;
+  } else if (argc >= 2 && strcmp(argv[1], "halt") == 0) {
+    mode = SHUTDOWN_HALT;
+    msg_start = 2;
+  }
+
+  char msg[96];
+  msg[0] = '\0';
+  if (msg_start < argc) {
+    size_t pos = 0;
+    for (int i = msg_start; i < argc && pos < sizeof(msg) - 1; i++) {
+      if (i > msg_start && pos < sizeof(msg) - 1)
+        msg[pos++] = ' ';
+      for (const char *q = argv[i]; *q && pos < sizeof(msg) - 1; q++)
+        msg[pos++] = *q;
+    }
+    msg[pos] = '\0';
+  }
+
+  schedule_shutdown(mode, secs * 1000, msg[0] ? msg : NULL);
+
+  viprint("Shutdown scheduled in ");
+  print_uint(secs);
+  viprint("s");
+  if (mode == SHUTDOWN_REBOOT)
+    viprint(" (reboot)");
+  if (mode == SHUTDOWN_HALT)
+    viprint(" (halt)");
+  viprint(". Use 'timer cancel' to abort.\n");
 }
